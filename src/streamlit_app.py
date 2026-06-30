@@ -198,7 +198,7 @@ col_gate, _ = st.columns([1, 3])
 with col_gate:
     access_code = st.text_input("System Access", type="password", label_visibility="collapsed", placeholder="Enter key...")
 
-if access_code != "FAIBI2026":
+if access_code != "faibi2026":
     st.stop()  # Silently breaks compilation execution right here so the app looks empty to outsiders
 
 # --- Core App Layout Triggers once correct code is loaded ---
