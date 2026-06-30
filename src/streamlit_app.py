@@ -174,10 +174,10 @@ def generate_pdf(data):
 # --- Web Interface Design ---
 st.set_page_config(page_title="FA-IBI Generator", layout="centered")
 
-# CSS Watermark Hider Override Block
+# CSS Style Override Block
 st.markdown("""
     <style>
-    /* Aggressively clear leftover framework bounding spaces */
+    /* Turn off visibility for internal branding tags */
     #MainMenu, footer, header, [data-testid="stToolbar"], .viewerBadge_container__1743q, [class*="viewerBadge"] {
         display: none !important;
         visibility: hidden !important;
@@ -195,23 +195,27 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# --- NATIVE DEVICE AUTO-LOGIN GATE ---
+# --- CLEAN PERSISTENT GATE SYSTEM ---
+if "device_authenticated" not in st.session_state:
+    st.session_state["device_authenticated"] = False
+
+# Read current active URL parameters
 query_params = st.query_params
 
-# Check if URL parameter token matches our secure vault validation pattern
-if query_params.get("device") == "verified":
-    device_authenticated = True
-else:
-    device_authenticated = False
+# If parameter is attached, set state to true, then instantly wipe the URL clean
+if query_params.get("session") == "active":
+    st.session_state["device_authenticated"] = True
+    st.query_params.clear()  # Wipes the browser address line back to vchletter.streamlit.app
 
-if not device_authenticated:
+if not st.session_state["device_authenticated"]:
     col_gate, _ = st.columns([1, 2])
     with col_gate:
         access_code = st.text_input("System Access", type="password", label_visibility="collapsed", placeholder="Enter key...")
     
     if access_code == st.secrets["ACCESS_KEY"]:
-        # Attach the token directly into the browser parameter address bar layout
-        st.query_params["device"] = "verified"
+        st.session_state["device_authenticated"] = True
+        # Set token param temporarily to trigger the loop, which self-clears on refresh
+        st.query_params["session"] = "active"
         st.rerun()
     else:
         st.stop()
