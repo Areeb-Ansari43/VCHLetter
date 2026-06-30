@@ -352,3 +352,64 @@ if uploaded_license is not None and pytesseract is not None:
             st.session_state.ocr_address = ", ".join(extracted_address_chunks)
 
         if extracted_first or extracted_last or extracted_licence or extracted_address_chunks:
+            st.success("Analysis complete! Fields mapped smoothly.")
+        else:
+            st.warning("Couldn't confidently match fields — check raw text and fill manually.")
+
+        uploaded_license = None
+
+if st.session_state.ocr_raw_debug:
+    with st.expander("🔍 Raw OCR text (for debugging)"):
+        st.text(st.session_state.ocr_raw_debug)
+
+# --- 2. Live Fleet Selector Menu ---
+options = ["-- Manual Entry --"] + [f"{v['reg']} ({v['model']})" for v in FLEET_VEHICLES]
+selected_vehicle = st.selectbox("Search/Select Vehicle from Fleet", options)
+
+if selected_vehicle != "-- Manual Entry --":
+    reg_match = selected_vehicle.split(" (")[0]
+    matched_car = next((v for v in FLEET_VEHICLES if v["reg"] == reg_match), None)
+    if matched_car:
+        st.session_state.sel_reg = matched_car["reg"]
+        st.session_state.sel_model = matched_car["model"]
+else:
+    st.session_state.sel_reg = ""
+    st.session_state.sel_model = ""
+
+# --- 3. Entry Form Layout ---
+with st.form("letter_form"):
+    col1, col2 = st.columns(2)
+    with col1:
+        date_obj = st.date_input("Document Date", datetime.now(), format="DD/MM/YYYY")
+        insurance = st.text_input("Insurance Policy No", "HAVFL-000211")
+        reg = st.text_input("Vehicle Registration", value=st.session_state.sel_reg)
+        model = st.text_input("Make and Model", value=st.session_state.sel_model)
+    with col2:
+        name = st.text_input("Driver Name", value=st.session_state.ocr_name)
+        licence = st.text_input("Driving Licence No", value=st.session_state.ocr_licence)
+        start_obj = st.date_input("Hire Start Date", datetime.now(), format="DD/MM/YYYY")
+        end_obj = st.date_input("Hire End Date", datetime.now(), format="DD/MM/YYYY")
+
+    address = st.text_area("Driver Address", value=st.session_state.ocr_address)
+    submitted = st.form_submit_button("Generate PDF")
+
+if submitted:
+    formatted_reg = format_uk_reg(reg)
+    payload = {
+        "date": date_obj.strftime("%d/%m/%Y"),
+        "insurance_policy": insurance,
+        "registration": formatted_reg,
+        "make_model": model.upper(),
+        "driver_name": name.upper(),
+        "address": address.upper(),
+        "license_no": licence.upper(),
+        "start_date": start_obj.strftime("%d/%m/%Y"),
+        "end_date": end_obj.strftime("%d/%m/%Y")
+    }
+
+    pdf_path = generate_pdf(payload)
+    with open(pdf_path, "rb") as file:
+        st.download_button(label="Download Completed PDF", data=file, file_name="Permission_Letter.pdf", mime="application/pdf")
+
+# --- FIXED SCREEN COVERING BANNER PANEL ---
+st.markdown('<div class="vch-branding-cover">Powered By <a href="https://virtualcarhire.pages.dev/" target="_blank">Virtual Car Hire</a></div>', unsafe_allow_html=True)
