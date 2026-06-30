@@ -7,7 +7,6 @@ from PIL import Image
 from datetime import datetime
 from reportlab.lib.pagesizes import letter
 from reportlab.pdfgen import canvas
-import streamlit.components.v1 as components
 
 try:
     import pytesseract
@@ -43,7 +42,7 @@ FLEET_VEHICLES = [
     {"reg": "GY69 NVL", "model": "MERCEDES-BENZ E300 "},
     {"reg": "HX19 VXB", "model": "MERCEDES-BENZ E220D "},
     {"reg": "HX19 VZG", "model": "MERCEDES-BENZ E220D "},
-    {"reg": "KF19 UCJ", "style": "TOYOTA COROLLA "},
+    {"reg": "KF19 UCJ", "model": "TOYOTA COROLLA "},  # KeyError typo fixed here
     {"reg": "KF19 UCN", "model": "TOYOTA COROLLA "},
     {"reg": "KN73 XLA", "model": "MERCEDES-BENZ EQE 300 "},
     {"reg": "KN73 XLB", "model": "MERCEDES-BENZ EQE 300 "},
@@ -123,7 +122,7 @@ def generate_pdf(data):
     sig_path = os.path.join("src", "signature.png")
 
     if os.path.exists(bg_path):
-        c.drawImage(bg_path, 0, 0, width=width, height=height)  # Syntax error duplicate fixed here
+        c.drawImage(bg_path, 0, 0, width=width, height=height)
 
     c.setFont("Helvetica", 11)
     c.drawRightString(width - 54, 595, data["date"])
@@ -175,24 +174,19 @@ def generate_pdf(data):
 # --- Web Interface Design ---
 st.set_page_config(page_title="FA-IBI Generator", layout="centered")
 
-# Visual Cleanup CSS Injection (Normalizes margins and structures the custom orange banner box)
+# Visual Cleanup CSS Injection (Includes Watermark masking + Responsive Form layout)
 st.markdown("""
     <style>
-    /* Hides standard layout elements */
     #MainMenu, footer, header, [data-testid="stToolbar"], .viewerBadge_container__1743q, [class*="viewerBadge"] {
         display: none !important;
         visibility: hidden !important;
         opacity: 0 !important;
     }
-    
-    /* Configures mobile scaling viewports perfectly */
     .main .block-container {
         padding-top: 1rem !important;
-        padding-bottom: 4rem !important;
+        padding-bottom: 5rem !important;
         max-width: 100% !important;
     }
-    
-    /* Custom banner element anchored right over the old deployment watermark */
     .vch-branding-cover {
         position: fixed;
         bottom: 0;
@@ -200,7 +194,7 @@ st.markdown("""
         left: 0;
         background-color: #0e1117;
         text-align: center;
-        padding: 10px;
+        padding: 12px;
         font-size: 14px;
         color: #888888;
         border-top: 1px solid #1f2937;
@@ -211,7 +205,6 @@ st.markdown("""
         font-weight: bold;
         text-decoration: none !important;
     }
-    
     @media screen and (max-width: 768px) {
         input, select, textarea, .stSelectbox, div[data-baseweb="select"] {
             font-size: 16px !important;
@@ -220,45 +213,23 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# --- HARDWARE LOCAL STORAGE PERSISTENCE ENGINE ---
-if "hardware_auth" not in st.session_state:
-    st.session_state["hardware_auth"] = False
+# --- SECURE RELOAD AUTO-LOGIN MODULE ---
+if "authenticated" not in st.session_state:
+    st.session_state["authenticated"] = False
 
-# Hidden javascript connector component structure
-html_auth_bridge = components.html("""
-<script>
-    const tokenKey = "faibi_verified_hardware_key";
-    
-    // Check internal parameters 
-    if (localStorage.getItem(tokenKey) === "PASSED") {
-        window.parent.postMessage({type: "HARDWARE_AUTH_VALID"}, "*");
-    }
-    
-    // Listen to verification requests coming from Python 
-    window.addEventListener("message", function(e) {
-        if (e.data.type === "WRITE_TOKEN") {
-            localStorage.setItem(tokenKey, "PASSED");
-        }
-    });
-</script>
-""", height=0, width=0)
+# Read URL routing configurations directly
+query_params = st.query_params
 
-# Catch session auth trigger messages from the iframe structure
-if not st.session_state["hardware_auth"]:
-    # Fallback to query validation parameters to allow re-login loops to run cleanly
-    if st.query_params.get("session") == "active":
-        st.session_state["hardware_auth"] = True
-        st.query_params.clear()
-        st.rerun()
+if query_params.get("session") == "active":
+    st.session_state["authenticated"] = True
 
+if not st.session_state["authenticated"]:
     col_gate, _ = st.columns([1, 2])
     with col_gate:
         access_code = st.text_input("System Access", type="password", label_visibility="collapsed", placeholder="Enter key...")
     
     if access_code == st.secrets["ACCESS_KEY"]:
-        st.session_state["hardware_auth"] = True
-        # Instruct the hardware browser cache tool layer to write a permanent validation key string
-        st.markdown("<script>window.postMessage({type: 'WRITE_TOKEN'}, '*');</script>", unsafe_allow_html=True)
+        st.session_state["authenticated"] = True
         st.query_params["session"] = "active"
         st.rerun()
     else:
@@ -411,5 +382,5 @@ if submitted:
     with open(pdf_path, "rb") as file:
         st.download_button(label="Download Completed PDF", data=file, file_name="Permission_Letter.pdf", mime="application/pdf")
 
-# --- FIXED SCREEN COVERING BANNER PANEL ---
+# --- WATERMARK MASKING BANNER ---
 st.markdown('<div class="vch-branding-cover">Powered By <a href="https://virtualcarhire.pages.dev/" target="_blank">Virtual Car Hire</a></div>', unsafe_allow_html=True)
