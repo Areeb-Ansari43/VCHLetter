@@ -42,7 +42,7 @@ FLEET_VEHICLES = [
     {"reg": "GY69 NVL", "model": "MERCEDES-BENZ E300 "},
     {"reg": "HX19 VXB", "model": "MERCEDES-BENZ E220D "},
     {"reg": "HX19 VZG", "model": "MERCEDES-BENZ E220D "},
-    {"reg": "KF19 UCJ", "model": "TOYOTA COROLLA "},  # KeyError typo fixed here
+    {"reg": "KF19 UCJ", "model": "TOYOTA COROLLA "},
     {"reg": "KF19 UCN", "model": "TOYOTA COROLLA "},
     {"reg": "KN73 XLA", "model": "MERCEDES-BENZ EQE 300 "},
     {"reg": "KN73 XLB", "model": "MERCEDES-BENZ EQE 300 "},
@@ -174,37 +174,44 @@ def generate_pdf(data):
 # --- Web Interface Design ---
 st.set_page_config(page_title="FA-IBI Generator", layout="centered")
 
-# Visual Cleanup CSS Injection (Includes Watermark masking + Responsive Form layout)
+# Visual Cleanup CSS Injection (Forces full-width responsiveness and sets up banner styles)
 st.markdown("""
     <style>
+    /* Turn off standard inner framing visibilities */
     #MainMenu, footer, header, [data-testid="stToolbar"], .viewerBadge_container__1743q, [class*="viewerBadge"] {
         display: none !important;
         visibility: hidden !important;
         opacity: 0 !important;
     }
+    
+    /* Wipes out mobile borders and makes layout match full display settings */
     .main .block-container {
         padding-top: 1rem !important;
         padding-bottom: 5rem !important;
         max-width: 100% !important;
     }
-    .vch-branding-cover {
-        position: fixed;
-        bottom: 0;
-        right: 0;
-        left: 0;
-        background-color: #0e1117;
-        text-align: center;
-        padding: 12px;
-        font-size: 14px;
-        color: #888888;
-        border-top: 1px solid #1f2937;
-        z-index: 999999;
+    
+    /* Styled custom brand container box meant to permanently dock at the page bottom window */
+    .vch-branding-cover-fixed {
+        position: fixed !important;
+        bottom: 0 !important;
+        right: 0 !important;
+        left: 0 !important;
+        width: 100vw !important;
+        background-color: #0e1117 !important;
+        text-align: center !important;
+        padding: 14px 0 !important;
+        font-size: 14px !important;
+        color: #888888 !important;
+        border-top: 1px solid #1f2937 !important;
+        z-index: 2147483647 !important; /* Force render over everything else */
     }
-    .vch-branding-cover a {
+    .vch-branding-cover-fixed a {
         color: #FF8C00 !important;
-        font-weight: bold;
+        font-weight: bold !important;
         text-decoration: none !important;
     }
+    
     @media screen and (max-width: 768px) {
         input, select, textarea, .stSelectbox, div[data-baseweb="select"] {
             font-size: 16px !important;
@@ -213,11 +220,11 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# --- SECURE RELOAD AUTO-LOGIN MODULE ---
+# --- SECURE RELOAD HARDWARE PERSISTENCE ENGINE ---
 if "authenticated" not in st.session_state:
     st.session_state["authenticated"] = False
 
-# Read URL routing configurations directly
+# Read URL routing parameter vectors
 query_params = st.query_params
 
 if query_params.get("session") == "active":
@@ -235,7 +242,7 @@ if not st.session_state["authenticated"]:
     else:
         st.stop()
 
-# --- Core App Layout ---
+# --- Core App Layout (Loads clean without URL paths once verified) ---
 st.title("FA-IBI Letter Generator")
 
 if "ocr_name" not in st.session_state: st.session_state.ocr_name = ""
@@ -382,5 +389,32 @@ if submitted:
     with open(pdf_path, "rb") as file:
         st.download_button(label="Download Completed PDF", data=file, file_name="Permission_Letter.pdf", mime="application/pdf")
 
-# --- WATERMARK MASKING BANNER ---
-st.markdown('<div class="vch-branding-cover">Powered By <a href="https://virtualcarhire.pages.dev/" target="_blank">Virtual Car Hire</a></div>', unsafe_allow_html=True)
+# --- HIGH-OVERRIDE BRAND MASKING FOOTER ---
+# This custom container injects a layout listener that runs in the root page window,
+# blocks the red cloud banner, and forces your Virtual Car Hire banner directly over the footer area.
+st.markdown("""
+    <div class="vch-branding-cover-fixed">Powered By <a href="https://virtualcarhire.pages.dev/" target="_blank">Virtual Car Hire</a></div>
+    
+    <script>
+    function forceGlobalStyles() {
+        const rootDoc = window.parent.document;
+        
+        // Target and lock out the cloud framework's absolute watermark block
+        const watermark = rootDoc.querySelector('div[class*="viewerBadge"]') || rootDoc.querySelector('.viewerBadge_container__1743q');
+        if (watermark) {
+            watermark.style.setProperty('display', 'none', 'important');
+            watermark.style.setProperty('opacity', '0', 'important');
+            watermark.style.setProperty('visibility', 'hidden', 'important');
+        }
+        
+        // Remove standard iframe alignment shifts to prevent mobile white bars
+        const mainFrame = rootDoc.querySelector('iframe[title="streamlitApp"]');
+        if (mainFrame) {
+            mainFrame.style.setProperty('margin-top', '0px', 'important');
+            mainFrame.style.setProperty('padding-top', '0px', 'important');
+        }
+    }
+    // Set a clean loop listener to intercept late styling insertions
+    setInterval(forceGlobalStyles, 300);
+    </script>
+""", unsafe_allow_html=True)
