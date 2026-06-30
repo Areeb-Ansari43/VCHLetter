@@ -123,7 +123,7 @@ def generate_pdf(data):
     sig_path = os.path.join("src", "signature.png")
 
     if os.path.exists(bg_path):
-        c.drawImage(bg_path, 0, 0, width=width, height=height)
+        c.drawImage(bg_path, 0, 0, width=width=width, height=height)
 
     c.setFont("Helvetica", 11)
     c.drawRightString(width - 54, 595, data["date"])
@@ -175,19 +175,23 @@ def generate_pdf(data):
 # --- Web Interface Design ---
 st.set_page_config(page_title="FA-IBI Generator", layout="centered")
 
-# Visual Cleanup CSS Injection (Includes Mobile viewport normalization adjustments)
+# Visual Cleanup Injection Style Blocks
 st.markdown("""
     <style>
+    /* Hides the default layout elements layout headers */
     #MainMenu, footer, header, [data-testid="stToolbar"], .viewerBadge_container__1743q, [class*="viewerBadge"] {
         display: none !important;
         visibility: hidden !important;
         opacity: 0 !important;
     }
+    
+    /* Normalizes mobile margins to look un-squished like your custom HF configuration */
     .main .block-container {
         padding-top: 1rem !important;
-        padding-bottom: 2rem !important;
+        padding-bottom: 3rem !important;
         max-width: 100% !important;
     }
+    
     @media screen and (max-width: 768px) {
         input, select, textarea, .stSelectbox, div[data-baseweb="select"] {
             font-size: 16px !important;
@@ -197,55 +201,48 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # --- HARDWARE LOCAL STORAGE MANAGER ENGINE ---
-if "authenticated" not in st.session_state:
-    st.session_state["authenticated"] = False
+if "hardware_auth" not in st.session_state:
+    st.session_state["hardware_auth"] = False
 
-# This invisible javascript bridge directly injects authentication checking scripts 
-# within the active browser session, independent of cross-origin context frames.
-html_auth_bridge = """
+# JavaScript injection that communicates directly with the window to read local storage parameters
+storage_html = """
 <script>
-    const tokenKey = "faibi_verified_hardware";
+    const parentWin = window.parent;
     
-    // Periodically sync authentication state directly up to Streamlit session context
-    function checkLocalStorage() {
-        if (localStorage.getItem(tokenKey) === "PASSED") {
-            window.parent.postMessage({type: "HARDWARE_VALID", value: true}, "*");
-        }
+    // Check if hardware token key string value has already been assigned to this terminal
+    if (localStorage.getItem("faibi_auth_hardware_token") === "PASSED") {
+        parentWin.postMessage({type: "HARDWARE_AUTH_SUCCESS"}, "*");
     }
-    
+
+    // Listen for updates sent down from the Python interface layer
     window.addEventListener("message", function(e) {
-        if (e.data.type === "WRITE_TOKEN") {
-            localStorage.setItem(tokenKey, "PASSED");
+        if (e.data.type === "WRITE_HARDWARE_TOKEN") {
+            localStorage.setItem("faibi_auth_hardware_token", "PASSED");
+        }
+        if (e.data.type === "HARDWARE_AUTH_SUCCESS") {
+            // Internal state catch mechanism 
+            window.parent.location.reload();
         }
     });
-    
-    setInterval(checkLocalStorage, 500);
 </script>
 """
-components.html(html_auth_bridge, height=0, width=0)
+components.html(storage_html, height=0, width=0)
 
-# Check user query parameter or manual entry token verification path
-if not st.session_state["authenticated"]:
-    # Fallback to query parameter check to allow auto-login triggers smoothly
-    if st.query_params.get("session") == "active":
-        st.session_state["authenticated"] = True
-        st.query_params.clear()
-        st.rerun()
-
+# Check verification context flags inside query storage loops
+if not st.session_state["hardware_auth"]:
     col_gate, _ = st.columns([1, 2])
     with col_gate:
         access_code = st.text_input("System Access", type="password", label_visibility="collapsed", placeholder="Enter key...")
     
     if access_code == st.secrets["ACCESS_KEY"]:
-        st.session_state["authenticated"] = True
-        # Explicitly instruct the script block to save verification properties permanently to the physical terminal
-        st.markdown("<script>window.postMessage({type: 'WRITE_TOKEN'}, '*');</script>", unsafe_allow_html=True)
-        st.query_params["session"] = "active"
+        st.session_state["hardware_auth"] = True
+        # Explicitly update hardware parameters via component message layer pipelines
+        st.markdown("<script>window.postMessage({type: 'WRITE_HARDWARE_TOKEN'}, '*');</script>", unsafe_allow_html=True)
         st.rerun()
     else:
         st.stop()
 
-# --- Core App Layout (Loads clean without URL clutter once unlocked) ---
+# --- Core App Layout (Loads clean without parameters once validated) ---
 st.title("FA-IBI Letter Generator")
 
 if "ocr_name" not in st.session_state: st.session_state.ocr_name = ""
@@ -392,6 +389,6 @@ if submitted:
     with open(pdf_path, "rb") as file:
         st.download_button(label="Download Completed PDF", data=file, file_name="Permission_Letter.pdf", mime="application/pdf")
 
-# --- CUSTOM BRAND FOOTER WRAPPER ---
+# --- CUSTOM REDIRECT BANNER (Covers bottom spacing blocks beautifully) ---
 st.write("---")
 st.markdown('<div style="text-align: center; color: #888888; font-size: 14px;">Powered By <a href="https://virtualcarhire.pages.dev/" target="_blank" style="color: #FF8C00; font-weight: bold; text-decoration: none;">Virtual Car Hire</a></div>', unsafe_allow_html=True)
