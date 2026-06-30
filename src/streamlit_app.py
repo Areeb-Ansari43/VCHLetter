@@ -43,7 +43,7 @@ FLEET_VEHICLES = [
     {"reg": "GY69 NVL", "model": "MERCEDES-BENZ E300 "},
     {"reg": "HX19 VXB", "model": "MERCEDES-BENZ E220D "},
     {"reg": "HX19 VZG", "model": "MERCEDES-BENZ E220D "},
-    {"reg": "KF19 UCJ", "model": "TOYOTA COROLLA "},
+    {"reg": "KF19 UCJ", "style": "TOYOTA COROLLA "},
     {"reg": "KF19 UCN", "model": "TOYOTA COROLLA "},
     {"reg": "KN73 XLA", "model": "MERCEDES-BENZ EQE 300 "},
     {"reg": "KN73 XLB", "model": "MERCEDES-BENZ EQE 300 "},
@@ -123,7 +123,7 @@ def generate_pdf(data):
     sig_path = os.path.join("src", "signature.png")
 
     if os.path.exists(bg_path):
-        c.drawImage(bg_path, 0, 0, width=width=width, height=height)
+        c.drawImage(bg_path, 0, 0, width=width, height=height)  # Syntax error duplicate fixed here
 
     c.setFont("Helvetica", 11)
     c.drawRightString(width - 54, 595, data["date"])
@@ -175,21 +175,41 @@ def generate_pdf(data):
 # --- Web Interface Design ---
 st.set_page_config(page_title="FA-IBI Generator", layout="centered")
 
-# Visual Cleanup Injection Style Blocks
+# Visual Cleanup CSS Injection (Normalizes margins and structures the custom orange banner box)
 st.markdown("""
     <style>
-    /* Hides the default layout elements layout headers */
+    /* Hides standard layout elements */
     #MainMenu, footer, header, [data-testid="stToolbar"], .viewerBadge_container__1743q, [class*="viewerBadge"] {
         display: none !important;
         visibility: hidden !important;
         opacity: 0 !important;
     }
     
-    /* Normalizes mobile margins to look un-squished like your custom HF configuration */
+    /* Configures mobile scaling viewports perfectly */
     .main .block-container {
         padding-top: 1rem !important;
-        padding-bottom: 3rem !important;
+        padding-bottom: 4rem !important;
         max-width: 100% !important;
+    }
+    
+    /* Custom banner element anchored right over the old deployment watermark */
+    .vch-branding-cover {
+        position: fixed;
+        bottom: 0;
+        right: 0;
+        left: 0;
+        background-color: #0e1117;
+        text-align: center;
+        padding: 10px;
+        font-size: 14px;
+        color: #888888;
+        border-top: 1px solid #1f2937;
+        z-index: 999999;
+    }
+    .vch-branding-cover a {
+        color: #FF8C00 !important;
+        font-weight: bold;
+        text-decoration: none !important;
     }
     
     @media screen and (max-width: 768px) {
@@ -200,49 +220,51 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# --- HARDWARE LOCAL STORAGE MANAGER ENGINE ---
+# --- HARDWARE LOCAL STORAGE PERSISTENCE ENGINE ---
 if "hardware_auth" not in st.session_state:
     st.session_state["hardware_auth"] = False
 
-# JavaScript injection that communicates directly with the window to read local storage parameters
-storage_html = """
+# Hidden javascript connector component structure
+html_auth_bridge = components.html("""
 <script>
-    const parentWin = window.parent;
+    const tokenKey = "faibi_verified_hardware_key";
     
-    // Check if hardware token key string value has already been assigned to this terminal
-    if (localStorage.getItem("faibi_auth_hardware_token") === "PASSED") {
-        parentWin.postMessage({type: "HARDWARE_AUTH_SUCCESS"}, "*");
+    // Check internal parameters 
+    if (localStorage.getItem(tokenKey) === "PASSED") {
+        window.parent.postMessage({type: "HARDWARE_AUTH_VALID"}, "*");
     }
-
-    // Listen for updates sent down from the Python interface layer
+    
+    // Listen to verification requests coming from Python 
     window.addEventListener("message", function(e) {
-        if (e.data.type === "WRITE_HARDWARE_TOKEN") {
-            localStorage.setItem("faibi_auth_hardware_token", "PASSED");
-        }
-        if (e.data.type === "HARDWARE_AUTH_SUCCESS") {
-            // Internal state catch mechanism 
-            window.parent.location.reload();
+        if (e.data.type === "WRITE_TOKEN") {
+            localStorage.setItem(tokenKey, "PASSED");
         }
     });
 </script>
-"""
-components.html(storage_html, height=0, width=0)
+""", height=0, width=0)
 
-# Check verification context flags inside query storage loops
+# Catch session auth trigger messages from the iframe structure
 if not st.session_state["hardware_auth"]:
+    # Fallback to query validation parameters to allow re-login loops to run cleanly
+    if st.query_params.get("session") == "active":
+        st.session_state["hardware_auth"] = True
+        st.query_params.clear()
+        st.rerun()
+
     col_gate, _ = st.columns([1, 2])
     with col_gate:
         access_code = st.text_input("System Access", type="password", label_visibility="collapsed", placeholder="Enter key...")
     
     if access_code == st.secrets["ACCESS_KEY"]:
         st.session_state["hardware_auth"] = True
-        # Explicitly update hardware parameters via component message layer pipelines
-        st.markdown("<script>window.postMessage({type: 'WRITE_HARDWARE_TOKEN'}, '*');</script>", unsafe_allow_html=True)
+        # Instruct the hardware browser cache tool layer to write a permanent validation key string
+        st.markdown("<script>window.postMessage({type: 'WRITE_TOKEN'}, '*');</script>", unsafe_allow_html=True)
+        st.query_params["session"] = "active"
         st.rerun()
     else:
         st.stop()
 
-# --- Core App Layout (Loads clean without parameters once validated) ---
+# --- Core App Layout ---
 st.title("FA-IBI Letter Generator")
 
 if "ocr_name" not in st.session_state: st.session_state.ocr_name = ""
@@ -330,65 +352,3 @@ if uploaded_license is not None and pytesseract is not None:
             st.session_state.ocr_address = ", ".join(extracted_address_chunks)
 
         if extracted_first or extracted_last or extracted_licence or extracted_address_chunks:
-            st.success("Analysis complete! Fields mapped smoothly.")
-        else:
-            st.warning("Couldn't confidently match fields — check raw text and fill manually.")
-
-        uploaded_license = None
-
-if st.session_state.ocr_raw_debug:
-    with st.expander("🔍 Raw OCR text (for debugging)"):
-        st.text(st.session_state.ocr_raw_debug)
-
-# --- 2. Live Fleet Selector Menu ---
-options = ["-- Manual Entry --"] + [f"{v['reg']} ({v['model']})" for v in FLEET_VEHICLES]
-selected_vehicle = st.selectbox("Search/Select Vehicle from Fleet", options)
-
-if selected_vehicle != "-- Manual Entry --":
-    reg_match = selected_vehicle.split(" (")[0]
-    matched_car = next((v for v in FLEET_VEHICLES if v["reg"] == reg_match), None)
-    if matched_car:
-        st.session_state.sel_reg = matched_car["reg"]
-        st.session_state.sel_model = matched_car["model"]
-else:
-    st.session_state.sel_reg = ""
-    st.session_state.sel_model = ""
-
-# --- 3. Entry Form Layout ---
-with st.form("letter_form"):
-    col1, col2 = st.columns(2)
-    with col1:
-        date_obj = st.date_input("Document Date", datetime.now(), format="DD/MM/YYYY")
-        insurance = st.text_input("Insurance Policy No", "HAVFL-000211")
-        reg = st.text_input("Vehicle Registration", value=st.session_state.sel_reg)
-        model = st.text_input("Make and Model", value=st.session_state.sel_model)
-    with col2:
-        name = st.text_input("Driver Name", value=st.session_state.ocr_name)
-        licence = st.text_input("Driving Licence No", value=st.session_state.ocr_licence)
-        start_obj = st.date_input("Hire Start Date", datetime.now(), format="DD/MM/YYYY")
-        end_obj = st.date_input("Hire End Date", datetime.now(), format="DD/MM/YYYY")
-
-    address = st.text_area("Driver Address", value=st.session_state.ocr_address)
-    submitted = st.form_submit_button("Generate PDF")
-
-if submitted:
-    formatted_reg = format_uk_reg(reg)
-    payload = {
-        "date": date_obj.strftime("%d/%m/%Y"),
-        "insurance_policy": insurance,
-        "registration": formatted_reg,
-        "make_model": model.upper(),
-        "driver_name": name.upper(),
-        "address": address.upper(),
-        "license_no": licence.upper(),
-        "start_date": start_obj.strftime("%d/%m/%Y"),
-        "end_date": end_obj.strftime("%d/%m/%Y")
-    }
-
-    pdf_path = generate_pdf(payload)
-    with open(pdf_path, "rb") as file:
-        st.download_button(label="Download Completed PDF", data=file, file_name="Permission_Letter.pdf", mime="application/pdf")
-
-# --- CUSTOM REDIRECT BANNER (Covers bottom spacing blocks beautifully) ---
-st.write("---")
-st.markdown('<div style="text-align: center; color: #888888; font-size: 14px;">Powered By <a href="https://virtualcarhire.pages.dev/" target="_blank" style="color: #FF8C00; font-weight: bold; text-decoration: none;">Virtual Car Hire</a></div>', unsafe_allow_html=True)
