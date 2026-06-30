@@ -5,3 +5,12 @@ maxUploadSize = 10
 
 [browser]
 gatherUsageStats = false
+
+[theme]
+backgroundColor = "#0e1117"
+secondaryBackgroundColor = "#1f2937"
+textColor = "#ffffff"
+
+[client]
+toolbarMode = "viewer"
+showSidebarNavigation = false
