@@ -183,47 +183,46 @@ def generate_contract(data):
     c = canvas.Canvas(output_filename, pagesize=letter)
     width, height = letter
 
-    # Verbatim references mapped from image_8f09be.png file storage structure
     bg1_path = os.path.join("src", "Contract Blank.png")
     bg2_path = os.path.join("src", "Contarct Blank 2.png")
 
-    # --- PAGE 1 GENERATION ---
+    # --- PAGE 1 ---
     if os.path.exists(bg1_path):
         c.drawImage(bg1_path, 0, 0, width=width, height=height)
     
     c.setFont("Helvetica-Bold", 10)
-    c.drawString(405, 712, f"{data['contract_no']}")
+    c.drawString(380, 714, f"{data['contract_no']}")
 
     c.setFont("Helvetica", 10)
-    # Mapping exact form coordinate locations
-    c.drawString(95, 663, f"{data['driver_name']}")
-    c.drawString(515, 663, f"{data['dob']}")
-    c.drawString(95, 627, f"{data['address']}")
-    c.drawString(505, 627, f"{data['postcode']}")
-    c.drawString(100, 591, f"{data['license_no']}")
-    c.drawString(325, 591, f"{data['issuing_authority']}")
-    c.drawString(500, 591, f"{data['expiry_date']}")
+    # Recalibrated coordinate system maps to fit inside the blank lines perfectly
+    c.drawString(110, 663, f"{data['driver_name']}")
+    c.drawString(505, 663, f"{data['dob']}")
+    c.drawString(100, 627, f"{data['address']}")
+    c.drawString(500, 627, f"{data['postcode']}")
+    c.drawString(115, 591, f"{data['license_no']}")
+    c.drawString(340, 591, f"{data['issuing_authority']}")
+    c.drawString(495, 591, f"{data['expiry_date']}")
     c.drawString(75, 555, f"{data['phone']}")
     c.drawString(295, 555, f"{data['email']}")
 
-    # Hire Payments Blanks Positions
+    # Hire Payments Row
     c.drawString(125, 417, f"{data['rent']}")
     c.drawString(70, 362, f"{data['rate']}")
     c.drawString(105, 319, f"{data['deposit']}")
 
-    # Hire Durations Positions
-    c.drawString(110, 260, f"{data['start_date']}")
-    c.drawString(170, 245, f"{data['expected_return']}")
+    # Hire Period Row
+    c.drawString(135, 261, f"{data['start_date']}")
+    c.drawString(190, 246, f"{data['expected_return']}")
 
-    # Vehicle Spec Blanks Positions
-    c.drawString(95, 193, f"{data['car_make']}")
-    c.drawString(295, 193, f"{data['registration']}")
-    c.drawString(500, 193, f"{data['car_model']}")
-    c.drawString(40, 107, f"{data['date']}")
+    # Vehicle Form Details Row
+    c.drawString(100, 193, f"{data['car_make']}")
+    c.drawString(440, 193, f"{data['registration']}")
+    c.drawString(505, 193, f"{data['car_model']}")
+    c.drawString(85, 108, f"{data['date']}")
 
     c.showPage()
 
-    # --- PAGE 2 GENERATION ---
+    # --- PAGE 2 ---
     if os.path.exists(bg2_path):
         c.drawImage(bg2_path, 0, 0, width=width, height=height)
 
@@ -235,7 +234,7 @@ def generate_contract(data):
     c.save()
     return output_filename
 
-# --- Web Interface Design ---
+# --- Web Interface Design Layout ---
 st.set_page_config(page_title="FA-IBI Workspace", layout="centered")
 
 st.markdown("""
@@ -296,107 +295,107 @@ if not st.session_state["hardware_authenticated"]:
     else:
         st.stop()
 
-# --- Core App Interface Content ---
+# --- Core App Title ---
 st.title("FA-IBI Master Document Workspace")
 
-# Initialize Persistence Vectors
+# Initialize Shared Memory Variables
 for key in ["ocr_name", "ocr_licence", "ocr_address", "ocr_postcode", "ocr_dob", "ocr_expiry", "sel_reg", "sel_make", "sel_model"]:
     if key not in st.session_state: st.session_state[key] = ""
 
-st.markdown("### 🎛️ Global Data Automation Scanners")
-
-# Global Controller 1: Document Scanner (Shares text values dynamically over both form forms)
-uploaded_license = st.file_uploader("📷 Secure Driver's License Text Scanner (Autofills Forms)", type=["jpg", "png", "jpeg"])
-
-if uploaded_license is not None and pytesseract is not None:
-    with st.spinner("Processing scanner arrays..."):
-        img = Image.open(uploaded_license).convert("RGB")
-        img_np = np.array(img)
-        h, w = img_np.shape[:2]
-        if max(h, w) < 1600:
-            scale = 1600 / max(h, w)
-            img_np = cv2.resize(img_np, (int(w * scale), int(h * scale)), interpolation=cv2.INTER_CUBIC)
-
-        gray = cv2.cvtColor(img_np, cv2.COLOR_RGB2GRAY)
-        _, thresh = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-        custom_config = r'--oem 3 --psm 6'
-        raw_ocr_string = pytesseract.image_to_string(thresh, config=custom_config)
-
-        lines = [line.strip() for line in raw_ocr_string.split("\n") if line.strip()]
-        extracted_last, extracted_first, extracted_licence, extracted_address_chunks = "", "", "", []
-        extracted_dob, extracted_expiry = "", ""
-
-        field1_re = re.compile(r'^[1lI]\.?\s+([A-Z][A-Z \'-]+)$')
-        field2_re = re.compile(r'^2\.?\s+([A-Z][A-Z \'-]+)$')
-        field4b_re = re.compile(r'^4[B8]\.?\s*([0-9./-]+)')
-        field4a_re = re.compile(r'^4[A4]\.?\s*([0-9./-]+)')
-        field5_re = re.compile(r'^5\.?\s+([A-Z0-9]{8,20})$')
-        field8_re = re.compile(r'^[8B]\.?\s+(.+)$')
-        stop_prefixes = ("3", "4", "5", "6", "7", "9", "UK", "DRIVING", "DVLA")
-
-        for index, raw_line in enumerate(lines):
-            item_upper = raw_line.strip().upper()
-            m1 = field1_re.match(item_upper)
-            if m1 and not extracted_last: extracted_last = m1.group(1).strip(); continue
-            m2 = field2_re.match(item_upper)
-            if m2 and not extracted_first: extracted_first = m2.group(1).strip(); continue
-            m4a = field4a_re.match(item_upper)
-            if m4a and not extracted_dob: extracted_dob = m4a.group(1).strip(); continue
-            m4b = field4b_re.match(item_upper)
-            if m4b and not extracted_expiry: extracted_expiry = m4b.group(1).strip(); continue
-            m5 = field5_re.match(item_upper)
-            if m5 and not extracted_licence: extracted_licence = re.sub(r'\s', '', m5.group(1)); continue
-            
-            m8 = field8_re.match(item_upper)
-            if m8:
-                first_line_addr = m8.group(1).strip()
-                if len(first_line_addr) > 2: extracted_address_chunks.append(first_line_addr)
-                for step in range(1, 5):
-                    if index + step < len(lines):
-                        next_chunk = lines[index + step].strip().upper()
-                        if next_chunk.startswith(stop_prefixes): break
-                        if len(next_chunk) > 3: extracted_address_chunks.append(next_chunk)
-                continue
-
-        full_addr_str = ", ".join(extracted_address_chunks)
-        postcode_match = re.search(r'\b([A-Z]{1,2}[0-9][A-Z0-9]?\s?[0-9][A-Z]{2})\b', full_addr_str)
-        if postcode_match:
-            st.session_state.ocr_postcode = postcode_match.group(1).strip()
-            full_addr_str = full_addr_str.replace(postcode_match.group(1), "").strip(", ")
-
-        if extracted_first or extracted_last: st.session_state.ocr_name = f"{extracted_first} {extracted_last}".strip()
-        if extracted_licence: st.session_state.ocr_licence = extracted_licence
-        if extracted_address_chunks: st.session_state.ocr_address = full_addr_str
-        if extracted_dob: st.session_state.ocr_dob = extracted_dob
-        if extracted_expiry: st.session_state.ocr_expiry = extracted_expiry
-
-        st.success("Global scanner data extracted successfully!")
-        uploaded_license = None
-
-# Global Controller 2: Central Fleet Vehicle Lookup Menu
-fleet_options = ["-- Manual Entry --"] + [f"{v['reg']} ({v['model']})" for v in FLEET_VEHICLES]
-selected_vehicle = st.selectbox("🚗 Search/Select Vehicle from Fleet Database (Autofills Forms)", fleet_options)
-
-if selected_vehicle != "-- Manual Entry --":
-    reg_match = selected_vehicle.split(" (")[0]
-    matched_car = next((v for v in FLEET_VEHICLES if v["reg"] == reg_match), None)
-    if matched_car:
-        st.session_state.sel_reg = matched_car["reg"]
-        make_part, model_part = split_make_model(matched_car["model"])
-        st.session_state.sel_make = make_part
-        st.session_state.sel_model = model_part
-else:
-    st.session_state.sel_reg, st.session_state.sel_make, st.session_state.sel_model = "", "", ""
-
-st.markdown("---")
-
+# --- Workspace Navigation Tabs ---
 tab1, tab2 = st.tabs(["📝 Permission Letter Creator", "📜 FA-IBI Contract Generator"])
+
+# Helper macro to build scanner + selector controls under navbar
+def render_automation_controls():
+    st.markdown("#### 🎛️ Data Automation Scanners")
+    
+    # Compact file selector alignment mapping
+    col_scan, col_fleet = st.columns([1, 1])
+    
+    with col_scan:
+        uploaded_license = st.file_uploader("📷 Driver's License Scanner", type=["jpg", "png", "jpeg"])
+        if uploaded_license is not None and pytesseract is not None:
+            with st.spinner("Scanning data matrix..."):
+                img = Image.open(uploaded_license).convert("RGB")
+                img_np = np.array(img)
+                h, w = img_np.shape[:2]
+                if max(h, w) < 1600:
+                    scale = 1600 / max(h, w)
+                    img_np = cv2.resize(img_np, (int(w * scale), int(h * scale)), interpolation=cv2.INTER_CUBIC)
+
+                gray = cv2.cvtColor(img_np, cv2.COLOR_RGB2GRAY)
+                _, thresh = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+                custom_config = r'--oem 3 --psm 6'
+                raw_ocr_string = pytesseract.image_to_string(thresh, config=custom_config)
+
+                lines = [line.strip() for line in raw_ocr_string.split("\n") if line.strip()]
+                extracted_last, extracted_first, extracted_licence, extracted_address_chunks = "", "", "", []
+                extracted_dob, extracted_expiry = "", ""
+
+                field1_re = re.compile(r'^[1lI]\.?\s+([A-Z][A-Z \'-]+)$')
+                field2_re = re.compile(r'^2\.?\s+([A-Z][A-Z \'-]+)$')
+                field4b_re = re.compile(r'^4[B8]\.?\s*([0-9./-]+)')
+                field4a_re = re.compile(r'^4[A4]\.?\s*([0-9./-]+)')
+                field5_re = re.compile(r'^5\.?\s+([A-Z0-9]{8,20})$')
+                field8_re = re.compile(r'^[8B]\.?\s+(.+)$')
+                stop_prefixes = ("3", "4", "5", "6", "7", "9", "UK", "DRIVING", "DVLA")
+
+                for index, raw_line in enumerate(lines):
+                    item_upper = raw_line.strip().upper()
+                    m1 = field1_re.match(item_upper)
+                    if m1 and not extracted_last: extracted_last = m1.group(1).strip(); continue
+                    m2 = field2_re.match(item_upper)
+                    if m2 and not extracted_first: extracted_first = m2.group(1).strip(); continue
+                    m4a = field4a_re.match(item_upper)
+                    if m4a and not extracted_dob: extracted_dob = m4a.group(1).strip(); continue
+                    m4b = field4b_re.match(item_upper)
+                    if m4b and not extracted_expiry: extracted_expiry = m4b.group(1).strip(); continue
+                    m5 = field5_re.match(item_upper)
+                    if m5 and not extracted_licence: extracted_licence = re.sub(r'\s', '', m5.group(1)); continue
+                    
+                    m8 = field8_re.match(item_upper)
+                    if m8:
+                        first_line_addr = m8.group(1).strip()
+                        if len(first_line_addr) > 2: extracted_address_chunks.append(first_line_addr)
+                        for step in range(1, 5):
+                            if index + step < len(lines):
+                                next_chunk = lines[index + step].strip().upper()
+                                if next_chunk.startswith(stop_prefixes): break
+                                if len(next_chunk) > 3: extracted_address_chunks.append(next_chunk)
+                        continue
+
+                full_addr_str = ", ".join(extracted_address_chunks)
+                postcode_match = re.search(r'\b([A-Z]{1,2}[0-9][A-Z0-9]?\s?[0-9][A-Z]{2})\b', full_addr_str)
+                if postcode_match:
+                    st.session_state.ocr_postcode = postcode_match.group(1).strip()
+                    full_addr_str = full_addr_str.replace(postcode_match.group(1), "").strip(", ")
+
+                if extracted_first or extracted_last: st.session_state.ocr_name = f"{extracted_first} {extracted_last}".strip()
+                if extracted_licence: st.session_state.ocr_licence = extracted_licence
+                if extracted_address_chunks: st.session_state.ocr_address = full_addr_str
+                if extracted_dob: st.session_state.ocr_dob = extracted_dob
+                if extracted_expiry: st.session_state.ocr_expiry = extracted_expiry
+                st.rerun()
+
+    with col_fleet:
+        fleet_options = ["-- Manual Entry --"] + [f"{v['reg']} ({v['model']})" for v in FLEET_VEHICLES]
+        selected_vehicle = st.selectbox("🚗 Select Vehicle from Fleet", fleet_options)
+        if selected_vehicle != "-- Manual Entry --":
+            reg_match = selected_vehicle.split(" (")[0]
+            matched_car = next((v for v in FLEET_VEHICLES if v["reg"] == reg_match), None)
+            if matched_car:
+                st.session_state.sel_reg = matched_car["reg"]
+                make_part, model_part = split_make_model(matched_car["model"])
+                st.session_state.sel_make = make_part
+                st.session_state.sel_model = model_part
 
 # ==========================================
 # --- TAB 1: PERMISSION LETTER WORKFLOW ---
 # ==========================================
 with tab1:
-    with st.form("permission_letter_form_v3"):
+    render_automation_controls()
+    st.markdown("---")
+    with st.form("permission_letter_form_v4"):
         col1, col2 = st.columns(2)
         with col1:
             p_date = st.date_input("Document Issue Date", datetime.now(), format="DD/MM/YYYY")
@@ -432,7 +431,9 @@ with tab1:
 # --- TAB 2: FA-IBI CONTRACT WORKFLOW ----
 # ==========================================
 with tab2:
-    with st.form("contract_generation_form_v3"):
+    render_automation_controls()
+    st.markdown("---")
+    with st.form("contract_generation_form_v4"):
         st.subheader("Hirer Details Section")
         col_c1, col_c2 = st.columns(2)
         with col_c1:
