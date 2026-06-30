@@ -174,37 +174,17 @@ def generate_pdf(data):
 # --- Web Interface Design ---
 st.set_page_config(page_title="FA-IBI Generator", layout="centered")
 
-# --- BRANDING OVERLOAD WIPEOUT ENGINE ---
-# We inject a JavaScript parent breaker block that climbs out of the app framework container 
-# and explicitly destroys the hosting watermark from the screen memory dynamically.
+# CSS Watermark Hider Override Block
 st.markdown("""
-    <script>
-    function killBranding() {
-        // Targets internal Streamlit content tags
-        const badTags = ['#MainMenu', 'footer', 'header', '[data-testid="stToolbar"]', '.viewerBadge_container__1743q'];
-        badTags.forEach(sel => {
-            const el = window.parent.document.querySelector(sel) || document.querySelector(sel);
-            if(el) el.style.setProperty('display', 'none', 'important');
-        });
-        
-        // Target the outer hosting watermark element seen in image_8ccaa4.png
-        const outerWatermark = window.parent.document.querySelector('div[class*="viewerBadge"]');
-        if (outerWatermark) {
-            outerWatermark.style.setProperty('display', 'none', 'important');
-            outerWatermark.remove();
-        }
-    }
-    // Repetitive monitoring system ensures layout shifts do not restore it
-    setInterval(killBranding, 250);
-    </script>
     <style>
-    /* Backup CSS rules for localized interface viewports */
-    #MainMenu, footer, header, [data-testid="stToolbar"], .viewerBadge_container__1743q {
+    /* Aggressively clear leftover framework bounding spaces */
+    #MainMenu, footer, header, [data-testid="stToolbar"], .viewerBadge_container__1743q, [class*="viewerBadge"] {
         display: none !important;
         visibility: hidden !important;
+        opacity: 0 !important;
     }
     .main .block-container {
-        padding-top: 1.5rem !important;
+        padding-top: 0.5rem !important;
         padding-bottom: 1rem !important;
     }
     @media screen and (max-width: 768px) {
@@ -215,42 +195,28 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# --- HARDWARE REMEMBER ENGINE ---
-# Connects with browser local memory pools so validation survives page refreshes
-if "authenticated" not in st.session_state:
-    st.session_state["authenticated"] = False
+# --- NATIVE DEVICE AUTO-LOGIN GATE ---
+query_params = st.query_params
 
-# JavaScript wrapper layer handles client-side caching queries
-st.markdown("""
-    <script>
-    const storageKey = "fa_ibi_verified_device";
-    if (window.parent.localStorage.getItem(storageKey) === "true") {
-        // Send internal status pulse up to the Streamlit session state architecture
-        window.parent.postMessage({type: "AUTH_SUCCESS"}, "*");
-    }
-    window.addEventListener("message", function(event) {
-        if (event.data.type === "SAVE_AUTH") {
-            window.parent.localStorage.setItem(storageKey, "true");
-        }
-    });
-    </script>
-""", unsafe_allow_html=True)
+# Check if URL parameter token matches our secure vault validation pattern
+if query_params.get("device") == "verified":
+    device_authenticated = True
+else:
+    device_authenticated = False
 
-# Subtle input interface block configuration
-if not st.session_state["authenticated"]:
-    col_gate, _ = st.columns([1, 3])
+if not device_authenticated:
+    col_gate, _ = st.columns([1, 2])
     with col_gate:
         access_code = st.text_input("System Access", type="password", label_visibility="collapsed", placeholder="Enter key...")
     
     if access_code == st.secrets["ACCESS_KEY"]:
-        st.session_state["authenticated"] = True
-        # Save verification parameter permanently to this client's hard disk
-        st.markdown("<script>window.postMessage({type: 'SAVE_AUTH'}, '*');</script>", unsafe_allow_html=True)
+        # Attach the token directly into the browser parameter address bar layout
+        st.query_params["device"] = "verified"
         st.rerun()
     else:
         st.stop()
 
-# --- Core App Layout (Completely hidden unless key validation resolves) ---
+# --- Core App Layout ---
 st.title("FA-IBI Letter Generator")
 
 if "ocr_name" not in st.session_state: st.session_state.ocr_name = ""
