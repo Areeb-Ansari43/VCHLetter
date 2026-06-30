@@ -119,33 +119,27 @@ def split_make_model(full_string):
         return parts[0].upper(), parts[1].upper()
     return parts[0].upper(), ""
 
-# --- PDF Generation Modules ---
+# --- PDF Generation Modules (Speed Optimized via pageCompression) ---
 def generate_permission_letter(data):
     output_filename = "Permission_Letter.pdf"
-    c = canvas.Canvas(output_filename, pagesize=letter)
+    # Compression flags reduce background generation times significantly
+    c = canvas.Canvas(output_filename, pagesize=letter, pageCompression=1)
     width, height = letter
-
     bg_path = os.path.join("src", "image_f4efbe.png")
     sig_path = os.path.join("src", "signature.png")
-
     if os.path.exists(bg_path):
         c.drawImage(bg_path, 0, 0, width=width, height=height)
-
     c.setFont("Helvetica", 11)
     c.drawRightString(width - 54, 595, data["date"])
-
     c.setFont("Helvetica-Bold", 22)
     c.drawCentredString(width / 2, 550, "PERMISSION LETTER")
     c.setFont("Helvetica", 11)
     c.drawString(54, 520, "To Whom It May Concern,")
-
     c.drawString(54, 490, "We confirm that the below vehicle can be used for the carriage of passengers for hire and reward by prior")
     line2_text = f"appointments (private hire) as specified on insurance policy: {data['insurance_policy']}"
     c.drawString(54, 475, line2_text)
-
     c.drawString(54, 460, "We authorise and give permission to the following individual to use the vehicle for all private hire bookings")
     c.drawString(54, 445, "from UBER, BOLT, OLA , FREE NOW app , WHEELY and other private hire operators.")
-
     fields = [
         ("Vehicle Registration", data["registration"]),
         ("Make and Model", data["make_model"]),
@@ -158,88 +152,59 @@ def generate_permission_letter(data):
         c.setFont("Helvetica", 11)
         c.drawString(54, y, f"{label} :")
         c.drawString(180, y, val)
-
     c.drawString(54, 275, "Hire start date.")
     c.drawString(145, 275, ":")
     c.drawString(160, 275, data["start_date"])
     c.drawString(54, 260, "Hire end date")
     c.drawString(145, 260, ":")
     c.drawString(160, 260, data["end_date"])
-
     c.drawString(54, 220, "Regards,")
-
     if os.path.exists(sig_path):
         c.drawImage(sig_path, 40, 120, width=280, height=115, mask='auto')
-
     c.setFont("Helvetica", 11)
     c.drawString(54, 115, "Muhammad Sohail Qureshi")
     c.drawString(54, 100, "Director(FA-IBI LTD)")
-
     c.save()
     return output_filename
 
 def generate_contract(data):
     output_filename = "FA_IBI_Contract.pdf"
-    c = canvas.Canvas(output_filename, pagesize=letter)
+    c = canvas.Canvas(output_filename, pagesize=letter, pageCompression=1)
     width, height = letter
-
     bg1_path = os.path.join("src", "Contract Blank.png")
     bg2_path = os.path.join("src", "Contarct Blank 2.png")
 
-    # --- PAGE 1 COORDINATE RECALIBRATION ---
     if os.path.exists(bg1_path):
         c.drawImage(bg1_path, 0, 0, width=width, height=height)
-    
-    # Contract number top right box line
     c.setFont("Helvetica-Bold", 10)
-    c.drawString(390, 715, f"{data['contract_no']}")
-
-    c.setFont("Helvetica", 9)
-    # Row 1: Name and DOB
+    c.drawString(380, 714, f"{data['contract_no']}")
+    c.setFont("Helvetica", 10)
     c.drawString(110, 663, f"{data['driver_name']}")
     c.drawString(505, 663, f"{data['dob']}")
-    
-    # Row 2: Address and Postcode
     c.drawString(100, 627, f"{data['address']}")
     c.drawString(500, 627, f"{data['postcode']}")
-    
-    # Row 3: Licence, Authority, and Expiry
     c.drawString(115, 591, f"{data['license_no']}")
     c.drawString(340, 591, f"{data['issuing_authority']}")
     c.drawString(495, 591, f"{data['expiry_date']}")
-    
-    # Row 4: Phone and Email
     c.drawString(75, 555, f"{data['phone']}")
     c.drawString(295, 555, f"{data['email']}")
-
-    # Hire Payments Data Values (Aligned nicely over lines)
-    c.drawString(135, 417, f"{data['rent']}")
-    c.drawString(75, 362, f"{data['rate']}")
-    c.drawString(115, 319, f"{data['deposit']}")
-
-    # Hire Start and Return Period Details
+    c.drawString(125, 417, f"{data['rent']}")
+    c.drawString(70, 362, f"{data['rate']}")
+    c.drawString(105, 319, f"{data['deposit']}")
     c.drawString(135, 261, f"{data['start_date']}")
     c.drawString(190, 246, f"{data['expected_return']}")
-
-    # Vehicle Specific Parameters Row 
     c.drawString(100, 193, f"{data['car_make']}")
     c.drawString(440, 193, f"{data['registration']}")
     c.drawString(505, 193, f"{data['car_model']}")
-    
-    # Contract Base Date
     c.drawString(85, 108, f"{data['date']}")
-
     c.showPage()
 
-    # --- PAGE 2 COORDINATE RECALIBRATION ---
     if os.path.exists(bg2_path):
         c.drawImage(bg2_path, 0, 0, width=width, height=height)
-
     c.setFont("Helvetica-Bold", 10)
     c.drawString(145, 742, f"{data['contract_no']}")
     c.drawString(340, 742, f"{data['registration']}")
     c.drawString(235, 34, f"{data['date']}")
-
     c.save()
     return output_filename
 
@@ -330,31 +295,43 @@ if not st.session_state["hardware_authenticated"]:
 st.title("FA-IBI Master Document Workspace")
 
 # Initialize Shared Memory Variables
-for key in ["ocr_name", "ocr_licence", "ocr_address", "ocr_postcode", "ocr_dob", "ocr_expiry", "sel_reg", "sel_make", "sel_model"]:
+for key in ["ocr_name", "ocr_licence", "ocr_address", "ocr_postcode", "ocr_dob", "ocr_expiry", "sel_reg", "sel_make", "sel_model", "scan_success", "db_success"]:
     if key not in st.session_state: st.session_state[key] = ""
+if "scan_trigger" not in st.session_state: st.session_state["scan_trigger"] = False
+if "db_trigger" not in st.session_state: st.session_state["db_trigger"] = False
 
 # --- Workspace Navigation Tabs ---
 tab1, tab2 = st.tabs(["📝 Permission Letter Creator", "📜 FA-IBI Contract Generator"])
 
+# Recalibrated helper controls featuring dedicated temporary session trackers
 def render_automation_controls(context_key):
     st.markdown("#### 🎛️ Data Automation Scanners")
+    
+    # Render operational feedback banners right inside control headers
+    if st.session_state["scan_success"] and st.session_state["scan_trigger"] == context_key:
+        st.success(st.session_state["scan_success"])
+    if st.session_state["db_success"] and st.session_state["db_trigger"] == context_key:
+        st.info(st.session_state["db_success"])
+        
     col_scan, col_fleet = st.columns([1, 1])
     
     with col_scan:
         uploaded_license = st.file_uploader("📷 Driver's License Scanner", type=["jpg", "png", "jpeg"], key=f"uploader_{context_key}")
         if uploaded_license is not None and pytesseract is not None:
-            with st.spinner("Scanning data matrix..."):
+            with st.spinner("Scanning matrix arrays..."):
                 img = Image.open(uploaded_license).convert("RGB")
                 img_np = np.array(img)
                 h, w = img_np.shape[:2]
-                if max(h, w) < 1600:
-                    scale = 1600 / max(h, w)
-                    img_np = cv2.resize(img_np, (int(w * scale), int(h * scale)), interpolation=cv2.INTER_CUBIC)
+                # High-speed processing scaling matrix limit target
+                if max(h, w) > 1200:
+                    scale = 1200 / max(h, w)
+                    img_np = cv2.resize(img_np, (int(w * scale), int(h * scale)), interpolation=cv2.INTER_AREA)
                 gray = cv2.cvtColor(img_np, cv2.COLOR_RGB2GRAY)
                 _, thresh = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
                 custom_config = r'--oem 3 --psm 6'
                 raw_ocr_string = pytesseract.image_to_string(thresh, config=custom_config)
                 lines = [line.strip() for line in raw_ocr_string.split("\n") if line.strip()]
+                
                 extracted_last, extracted_first, extracted_licence, extracted_address_chunks = "", "", "", []
                 extracted_dob, extracted_expiry = "", ""
                 field1_re = re.compile(r'^[1lI]\.?\s+([A-Z][A-Z \'-]+)$')
@@ -364,6 +341,7 @@ def render_automation_controls(context_key):
                 field5_re = re.compile(r'^5\.?\s+([A-Z0-9]{8,20})$')
                 field8_re = re.compile(r'^[8B]\.?\s+(.+)$')
                 stop_prefixes = ("3", "4", "5", "6", "7", "9", "UK", "DRIVING", "DVLA")
+                
                 for index, raw_line in enumerate(lines):
                     item_upper = raw_line.strip().upper()
                     if field1_re.match(item_upper) and not extracted_last: extracted_last = field1_re.match(item_upper).group(1).strip(); continue
@@ -380,6 +358,7 @@ def render_automation_controls(context_key):
                                 if next_chunk.startswith(stop_prefixes): break
                                 if len(next_chunk) > 3: extracted_address_chunks.append(next_chunk)
                         continue
+                        
                 full_addr_str = ", ".join(extracted_address_chunks)
                 postcode_match = re.search(r'\b([A-Z]{1,2}[0-9][A-Z0-9]?\s?[0-9][A-Z]{2})\b', full_addr_str)
                 if postcode_match:
@@ -390,19 +369,37 @@ def render_automation_controls(context_key):
                 if extracted_address_chunks: st.session_state.ocr_address = full_addr_str
                 if extracted_dob: st.session_state.ocr_dob = extracted_dob
                 if extracted_expiry: st.session_state.ocr_expiry = extracted_expiry
+                
+                st.session_state["scan_success"] = "✅ Driver's license successfully scanned and mapped to form fields!"
+                st.session_state["scan_trigger"] = context_key
                 st.rerun()
                 
     with col_fleet:
         fleet_options = ["-- Manual Entry --"] + [f"{v['reg']} ({v['model']})" for v in FLEET_VEHICLES]
-        selected_vehicle = st.selectbox("🚗 Select Vehicle from Fleet", fleet_options, key=f"fleet_{context_key}")
+        # Evaluates the active selector choice vector index position to match layout rules
+        current_sel_val = "-- Manual Entry --"
+        if st.session_state.sel_reg:
+            matched_opt = [o for o in fleet_options if o.startswith(st.session_state.sel_reg)]
+            if matched_opt: current_sel_val = matched_opt[0]
+            
+        selected_vehicle = st.selectbox("🚗 Select Vehicle from Fleet", fleet_options, index=fleet_options.index(current_sel_val), key=f"fleet_{context_key}")
         if selected_vehicle != "-- Manual Entry --":
             reg_match = selected_vehicle.split(" (")[0]
-            matched_car = next((v for v in FLEET_VEHICLES if v["reg"] == reg_match), None)
-            if matched_car:
-                st.session_state.sel_reg = matched_car["reg"]
-                make_part, model_part = split_make_model(matched_car["model"])
-                st.session_state.sel_make = make_part
-                st.session_state.sel_model = model_part
+            if st.session_state.sel_reg != reg_match:
+                matched_car = next((v for v in FLEET_VEHICLES if v["reg"] == reg_match), None)
+                if matched_car:
+                    st.session_state.sel_reg = matched_car["reg"]
+                    make_part, model_part = split_make_model(matched_car["model"])
+                    st.session_state.sel_make = make_part
+                    st.session_state.sel_model = model_part
+                    st.session_state["db_success"] = f"✅ Vehicle {reg_match} pulled from Database successfully!"
+                    st.session_state["db_trigger"] = context_key
+                    st.rerun()
+        else:
+            if st.session_state.sel_reg != "":
+                st.session_state.sel_reg, st.session_state.sel_make, st.session_state.sel_model = "", "", ""
+                st.session_state["db_success"] = ""
+                st.rerun()
 
 # ==========================================
 # --- TAB 1: PERMISSION LETTER WORKFLOW ---
@@ -410,7 +407,7 @@ def render_automation_controls(context_key):
 with tab1:
     render_automation_controls(context_key="tab1")
     st.markdown("---")
-    with st.form("permission_letter_form_v4"):
+    with st.form("permission_letter_form_v5"):
         col1, col2 = st.columns(2)
         with col1:
             p_date = st.date_input("Document Issue Date", datetime.now(), format="DD/MM/YYYY")
@@ -447,7 +444,7 @@ with tab1:
 with tab2:
     render_automation_controls(context_key="tab2")
     st.markdown("---")
-    with st.form("contract_generation_form_v4"):
+    with st.form("contract_generation_form_v5"):
         st.subheader("Hirer Details Section")
         col_c1, col_c2 = st.columns(2)
         with col_c1:
