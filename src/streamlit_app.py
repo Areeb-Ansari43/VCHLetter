@@ -7,6 +7,7 @@ from PIL import Image
 from datetime import datetime
 from reportlab.lib.pagesizes import letter
 from reportlab.pdfgen import canvas
+import streamlit.components.v1 as components
 
 try:
     import pytesseract
@@ -174,24 +175,19 @@ def generate_pdf(data):
 # --- Web Interface Design ---
 st.set_page_config(page_title="FA-IBI Generator", layout="centered")
 
-# Visual Cleanup CSS Injection (Forces full-width responsiveness and sets up banner styles)
+# Style Override Block
 st.markdown("""
     <style>
-    /* Turn off standard inner framing visibilities */
     #MainMenu, footer, header, [data-testid="stToolbar"], .viewerBadge_container__1743q, [class*="viewerBadge"] {
         display: none !important;
         visibility: hidden !important;
         opacity: 0 !important;
     }
-    
-    /* Wipes out mobile borders and makes layout match full display settings */
     .main .block-container {
         padding-top: 1rem !important;
         padding-bottom: 5rem !important;
         max-width: 100% !important;
     }
-    
-    /* Styled custom brand container box meant to permanently dock at the page bottom window */
     .vch-branding-cover-fixed {
         position: fixed !important;
         bottom: 0 !important;
@@ -204,14 +200,13 @@ st.markdown("""
         font-size: 14px !important;
         color: #888888 !important;
         border-top: 1px solid #1f2937 !important;
-        z-index: 2147483647 !important; /* Force render over everything else */
+        z-index: 2147483647 !important;
     }
     .vch-branding-cover-fixed a {
         color: #FF8C00 !important;
         font-weight: bold !important;
         text-decoration: none !important;
     }
-    
     @media screen and (max-width: 768px) {
         input, select, textarea, .stSelectbox, div[data-baseweb="select"] {
             font-size: 16px !important;
@@ -220,29 +215,27 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# --- SECURE RELOAD HARDWARE PERSISTENCE ENGINE ---
-if "authenticated" not in st.session_state:
-    st.session_state["authenticated"] = False
+# --- TOTAL SECURE SESSION DEVICE SYNC ---
+if "hardware_authenticated" not in st.session_state:
+    st.session_state["hardware_authenticated"] = False
 
-# Read URL routing parameter vectors
-query_params = st.query_params
+# Fallback parameter catch to clean URL routing string errors natively
+if st.query_params.get("verified") == "true":
+    st.session_state["hardware_authenticated"] = True
 
-if query_params.get("session") == "active":
-    st.session_state["authenticated"] = True
-
-if not st.session_state["authenticated"]:
+if not st.session_state["hardware_authenticated"]:
     col_gate, _ = st.columns([1, 2])
     with col_gate:
         access_code = st.text_input("System Access", type="password", label_visibility="collapsed", placeholder="Enter key...")
     
     if access_code == st.secrets["ACCESS_KEY"]:
-        st.session_state["authenticated"] = True
-        st.query_params["session"] = "active"
+        st.session_state["hardware_authenticated"] = True
+        st.query_params["verified"] = "true"
         st.rerun()
     else:
         st.stop()
 
-# --- Core App Layout (Loads clean without URL paths once verified) ---
+# --- Core App Layout ---
 st.title("FA-IBI Letter Generator")
 
 if "ocr_name" not in st.session_state: st.session_state.ocr_name = ""
@@ -389,32 +382,21 @@ if submitted:
     with open(pdf_path, "rb") as file:
         st.download_button(label="Download Completed PDF", data=file, file_name="Permission_Letter.pdf", mime="application/pdf")
 
-# --- HIGH-OVERRIDE BRAND MASKING FOOTER ---
-# This custom container injects a layout listener that runs in the root page window,
-# blocks the red cloud banner, and forces your Virtual Car Hire banner directly over the footer area.
+# --- HIGH-OVERRIDE MASKING LAYER PANEL ---
 st.markdown("""
     <div class="vch-branding-cover-fixed">Powered By <a href="https://virtualcarhire.pages.dev/" target="_blank">Virtual Car Hire</a></div>
     
     <script>
-    function forceGlobalStyles() {
+    function coverWatermark() {
         const rootDoc = window.parent.document;
         
-        // Target and lock out the cloud framework's absolute watermark block
-        const watermark = rootDoc.querySelector('div[class*="viewerBadge"]') || rootDoc.querySelector('.viewerBadge_container__1743q');
-        if (watermark) {
-            watermark.style.setProperty('display', 'none', 'important');
-            watermark.style.setProperty('opacity', '0', 'important');
-            watermark.style.setProperty('visibility', 'hidden', 'important');
-        }
-        
-        // Remove standard iframe alignment shifts to prevent mobile white bars
-        const mainFrame = rootDoc.querySelector('iframe[title="streamlitApp"]');
-        if (mainFrame) {
-            mainFrame.style.setProperty('margin-top', '0px', 'important');
-            mainFrame.style.setProperty('padding-top', '0px', 'important');
+        // Wipe platform watermarks dynamically from screen memory layouts
+        const badge = rootDoc.querySelector('div[class*="viewerBadge"]') || rootDoc.querySelector('.viewerBadge_container__1743q');
+        if (badge) {
+            badge.style.setProperty('display', 'none', 'important');
+            badge.style.setProperty('opacity', '0', 'important');
         }
     }
-    // Set a clean loop listener to intercept late styling insertions
-    setInterval(forceGlobalStyles, 300);
+    setInterval(coverWatermark, 250);
     </script>
 """, unsafe_allow_html=True)
