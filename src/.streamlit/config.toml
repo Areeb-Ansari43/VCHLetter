@@ -7,10 +7,11 @@ maxUploadSize = 10
 gatherUsageStats = false
 
 [theme]
+primaryColor = "#ff4b4b"
 backgroundColor = "#0e1117"
 secondaryBackgroundColor = "#1f2937"
 textColor = "#ffffff"
 
 [client]
-toolbarMode = "viewer"
-showSidebarNavigation = false
+toolbarMode = "minimal"
+showSidebarNavigation = false.
