@@ -7,6 +7,7 @@ from PIL import Image
 from datetime import datetime
 from reportlab.lib.pagesizes import letter
 from reportlab.pdfgen import canvas
+import streamlit.components.v1 as components
 
 try:
     import pytesseract
@@ -124,7 +125,6 @@ def generate_pdf(data):
     if os.path.exists(bg_path):
         c.drawImage(bg_path, 0, 0, width=width, height=height)
 
-    # Date
     c.setFont("Helvetica", 11)
     c.drawRightString(width - 54, 595, data["date"])
 
@@ -162,7 +162,6 @@ def generate_pdf(data):
 
     c.drawString(54, 220, "Regards,")
 
-    # SIGNATURE COMPONENT ADJUSTED LEFT AND ENGORGED UP (280x115)
     if os.path.exists(sig_path):
         c.drawImage(sig_path, 40, 120, width=280, height=115, mask='auto')
 
@@ -176,14 +175,20 @@ def generate_pdf(data):
 # --- Web Interface Design ---
 st.set_page_config(page_title="FA-IBI Generator", layout="centered")
 
-# Injection styling to completely kill Streamlit branding elements
+# Total Brand Wipeout CSS Injection
 st.markdown("""
     <style>
-    #MainMenu {visibility: hidden;}
-    footer {visibility: hidden;}
-    header {visibility: hidden;}
-    [data-testid="stToolbar"] {visibility: hidden !important;}
-    .viewerBadge_container__1743q {display: none !important;}
+    /* Hide headers, footers, menus, toolbar buttons completely */
+    #MainMenu, footer, header, [data-testid="stToolbar"], .viewerBadge_container__1743q {
+        display: none !important;
+        visibility: hidden !important;
+    }
+    
+    /* Strict layout spacing adjust to remove space left behind by hidden elements */
+    .main .block-container {
+        padding-top: 1rem !important;
+        padding-bottom: 1rem !important;
+    }
     
     @media screen and (max-width: 768px) {
         input, select, textarea, .stSelectbox, div[data-baseweb="select"] {
@@ -193,16 +198,47 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# Subtle, tiny key gate field positioned discreetly at the very top edge
+# --- DEVICE PERSISTENCE SYSTEM (Local Storage Connection) ---
+# This hidden engine communicates with the phone browser data storage cache.
+if "device_verified" not in st.session_state:
+    st.session_state.device_verified = False
+
+# JavaScript payload to inspect local client cache structures
+js_cache_engine = """
+<script>
+    const parentWin = window.parent;
+    
+    // Check if device previously successfully signed in
+    const isSaved = parentWin.localStorage.getItem("fa_ibi_authenticated");
+    if (isSaved === "true") {
+        parentWin.document.dispatchEvent(new CustomEvent("AUTH_STATE", {detail: "VERIFIED"}));
+    }
+
+    // Listen for updates from Streamlit UI layer
+    parentWin.document.addEventListener("SET_AUTH", function(e) {
+        parentWin.localStorage.setItem("fa_ibi_authenticated", "true");
+    });
+</script>
+"""
+components.html(js_cache_engine, height=0, width=0)
+
+# Listen to incoming authentication notifications from the local storage
+auth_response = st.context.headers.get("X-Auth-State") or ""
+
+# Subtle access field layout near top edge
 col_gate, _ = st.columns([1, 3])
 with col_gate:
     access_code = st.text_input("System Access", type="password", label_visibility="collapsed", placeholder="Enter key...")
 
-# Secure cloud-vault verification gate
-if access_code != st.secrets["ACCESS_KEY"]:
-    st.stop()  # Silently breaks compilation execution right here so the app looks empty to outsiders
+# Evaluate input or historical verification status
+if access_code == st.secrets["ACCESS_KEY"] or st.session_state.device_verified:
+    st.session_state.device_verified = True
+    # Permanently flash validation flag to the user's specific browser cache
+    components.html("<script>window.parent.document.dispatchEvent(new CustomEvent('SET_AUTH'));</script>", height=0, width=0)
+else:
+    st.stop()  # Keep screen completely blank and secure if authorization fails
 
-# --- Core App Layout Triggers once correct code is loaded ---
+# --- Core App Layout (Unlocks cleanly on verified hardware) ---
 st.title("FA-IBI Letter Generator")
 
 if "ocr_name" not in st.session_state: st.session_state.ocr_name = ""
@@ -284,8 +320,9 @@ if uploaded_license is not None and pytesseract is not None:
 
         if extracted_first or extracted_last:
             st.session_state.ocr_name = f"{extracted_first} {extracted_last}".strip()
-        if extracted_licence:
-            st.session_state.ocr_licence = extracted_licence
+        if __name__ == '__main__':
+            if extracted_licence:
+                st.session_state.ocr_licence = extracted_licence
         if extracted_address_chunks:
             st.session_state.ocr_address = ", ".join(extracted_address_chunks)
 
