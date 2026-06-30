@@ -119,7 +119,7 @@ def split_make_model(full_string):
         return parts[0].upper(), parts[1].upper()
     return parts[0].upper(), ""
 
-# --- PDF Generation Modules (Speed Optimized via pageCompression) ---
+# --- PDF Generation Modules ---
 def generate_permission_letter(data):
     output_filename = "Permission_Letter.pdf"
     c = canvas.Canvas(output_filename, pagesize=letter, pageCompression=1)
@@ -440,7 +440,6 @@ with tab2:
     render_automation_controls(context_key="tab2")
     st.markdown("---")
     
-    # Store payload globally in session state to handle form button life cycle refreshes natively
     if "contract_payload" not in st.session_state:
         st.session_state.contract_payload = None
 
@@ -472,4 +471,63 @@ with tab2:
         st.subheader("Hire Period Tracking")
         col_t1, col_t2 = st.columns(2)
         with col_t1: c_start = st.date_input("Date Hire Start", datetime.now(), format="DD/MM/YYYY")
-        with col_
+        with col_t2: c_return = st.date_input("Expected Date of Vehicle Return", datetime.now(), format="DD/MM/YYYY")
+
+        st.markdown("---")
+        st.subheader("Hire Vehicle Parameters")
+        col_v1, col_v2, col_v3 = st.columns(3)
+        with col_v1: c_make = st.text_input("Vehicle Make", value=st.session_state.sel_make)
+        with col_v2: c_reg = st.text_input("Reg No", value=st.session_state.sel_reg)
+        with col_v3: c_model_val = st.text_input("Model Specific", value=st.session_state.sel_model)
+
+        c_submitted = st.form_submit_button("Generate Complete 2-Page Contract")
+
+        if c_submitted:
+            st.session_state.contract_payload = {
+                "contract_no": c_contract_no.upper(),
+                "date": c_date.strftime("%d/%m/%Y"),
+                "driver_name": c_name.upper(),
+                "address": c_address.upper(),
+                "postcode": c_postcode.upper(),
+                "dob": c_dob,
+                "license_no": c_licence_no.upper(),
+                "expiry_date": c_expiry,
+                "issuing_authority": c_authority.upper(),
+                "phone": c_phone,
+                "email": c_email.upper(),
+                "rent": c_rent,
+                "rate": c_rate,
+                "deposit": c_deposit,
+                "start_date": c_start.strftime("%d/%m/%Y"),
+                "expected_return": c_return.strftime("%d/%m/%Y"),
+                "registration": format_uk_reg(c_reg),
+                "car_make": c_make.upper(),
+                "car_model": c_model_val.upper()
+            }
+
+    if st.session_state.contract_payload is not None:
+        pdf_filename = generate_contract(st.session_state.contract_payload)
+        with open(pdf_filename, "rb") as f:
+            st.download_button(
+                label="📥 Download Your Completed 2-Page Contract PDF",
+                data=f,
+                file_name=f"FA_IBI_Contract_{st.session_state.contract_payload['contract_no']}.pdf",
+                mime="application/pdf"
+            )
+        st.session_state.contract_payload = None
+
+# --- HIGH-OVERRIDE VISUAL MASK PANEL ---
+st.markdown("""
+    <div class="vch-branding-cover-fixed">Powered By <a href="https://virtualcarhire.pages.dev/" target="_blank">Virtual Car Hire</a></div>
+    <script>
+    function clearWatermarks() {
+        const rootDoc = window.parent.document;
+        const targetBadge = rootDoc.querySelector('div[class*="viewerBadge"]') || rootDoc.querySelector('.viewerBadge_container__1743q');
+        if (targetBadge) {
+            targetBadge.style.setProperty('display', 'none', 'important');
+            targetBadge.style.setProperty('opacity', '0', 'important');
+        }
+    }
+    setInterval(clearWatermarks, 250);
+    </script>
+""", unsafe_allow_html=True)
