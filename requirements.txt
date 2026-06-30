@@ -1,2 +1,6 @@
 streamlit
 reportlab
+pytesseract
+opencv-python-headless
+pillow
+numpy
