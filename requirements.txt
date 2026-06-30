@@ -1,2 +1,6 @@
-tesseract-ocr
-libgl1
+streamlit
+reportlab
+pytesseract
+pillow
+numpy
+opencv-python-headless
