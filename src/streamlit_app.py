@@ -7,6 +7,7 @@ from PIL import Image
 from datetime import datetime
 from reportlab.lib.pagesizes import letter
 from reportlab.pdfgen import canvas
+import streamlit.components.v1 as components
 
 try:
     import pytesseract
@@ -174,18 +175,18 @@ def generate_pdf(data):
 # --- Web Interface Design ---
 st.set_page_config(page_title="FA-IBI Generator", layout="centered")
 
-# CSS Style Override Block
+# Visual Cleanup CSS Injection (Includes Mobile viewport normalization adjustments)
 st.markdown("""
     <style>
-    /* Turn off visibility for internal branding tags */
     #MainMenu, footer, header, [data-testid="stToolbar"], .viewerBadge_container__1743q, [class*="viewerBadge"] {
         display: none !important;
         visibility: hidden !important;
         opacity: 0 !important;
     }
     .main .block-container {
-        padding-top: 0.5rem !important;
-        padding-bottom: 1rem !important;
+        padding-top: 1rem !important;
+        padding-bottom: 2rem !important;
+        max-width: 100% !important;
     }
     @media screen and (max-width: 768px) {
         input, select, textarea, .stSelectbox, div[data-baseweb="select"] {
@@ -195,32 +196,56 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# --- CLEAN PERSISTENT GATE SYSTEM ---
-if "device_authenticated" not in st.session_state:
-    st.session_state["device_authenticated"] = False
+# --- HARDWARE LOCAL STORAGE MANAGER ENGINE ---
+if "authenticated" not in st.session_state:
+    st.session_state["authenticated"] = False
 
-# Read current active URL parameters
-query_params = st.query_params
+# This invisible javascript bridge directly injects authentication checking scripts 
+# within the active browser session, independent of cross-origin context frames.
+html_auth_bridge = """
+<script>
+    const tokenKey = "faibi_verified_hardware";
+    
+    // Periodically sync authentication state directly up to Streamlit session context
+    function checkLocalStorage() {
+        if (localStorage.getItem(tokenKey) === "PASSED") {
+            window.parent.postMessage({type: "HARDWARE_VALID", value: true}, "*");
+        }
+    }
+    
+    window.addEventListener("message", function(e) {
+        if (e.data.type === "WRITE_TOKEN") {
+            localStorage.setItem(tokenKey, "PASSED");
+        }
+    });
+    
+    setInterval(checkLocalStorage, 500);
+</script>
+"""
+components.html(html_auth_bridge, height=0, width=0)
 
-# If parameter is attached, set state to true, then instantly wipe the URL clean
-if query_params.get("session") == "active":
-    st.session_state["device_authenticated"] = True
-    st.query_params.clear()  # Wipes the browser address line back to vchletter.streamlit.app
+# Check user query parameter or manual entry token verification path
+if not st.session_state["authenticated"]:
+    # Fallback to query parameter check to allow auto-login triggers smoothly
+    if st.query_params.get("session") == "active":
+        st.session_state["authenticated"] = True
+        st.query_params.clear()
+        st.rerun()
 
-if not st.session_state["device_authenticated"]:
     col_gate, _ = st.columns([1, 2])
     with col_gate:
         access_code = st.text_input("System Access", type="password", label_visibility="collapsed", placeholder="Enter key...")
     
     if access_code == st.secrets["ACCESS_KEY"]:
-        st.session_state["device_authenticated"] = True
-        # Set token param temporarily to trigger the loop, which self-clears on refresh
+        st.session_state["authenticated"] = True
+        # Explicitly instruct the script block to save verification properties permanently to the physical terminal
+        st.markdown("<script>window.postMessage({type: 'WRITE_TOKEN'}, '*');</script>", unsafe_allow_html=True)
         st.query_params["session"] = "active"
         st.rerun()
     else:
         st.stop()
 
-# --- Core App Layout ---
+# --- Core App Layout (Loads clean without URL clutter once unlocked) ---
 st.title("FA-IBI Letter Generator")
 
 if "ocr_name" not in st.session_state: st.session_state.ocr_name = ""
@@ -366,3 +391,7 @@ if submitted:
     pdf_path = generate_pdf(payload)
     with open(pdf_path, "rb") as file:
         st.download_button(label="Download Completed PDF", data=file, file_name="Permission_Letter.pdf", mime="application/pdf")
+
+# --- CUSTOM BRAND FOOTER WRAPPER ---
+st.write("---")
+st.markdown('<div style="text-align: center; color: #888888; font-size: 14px;">Powered By <a href="https://virtualcarhire.pages.dev/" target="_blank" style="color: #FF8C00; font-weight: bold; text-decoration: none;">Virtual Car Hire</a></div>', unsafe_allow_html=True)
