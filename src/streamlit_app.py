@@ -122,7 +122,6 @@ def split_make_model(full_string):
 # --- PDF Generation Modules (Speed Optimized via pageCompression) ---
 def generate_permission_letter(data):
     output_filename = "Permission_Letter.pdf"
-    # Compression flags reduce background generation times significantly
     c = canvas.Canvas(output_filename, pagesize=letter, pageCompression=1)
     width, height = letter
     bg_path = os.path.join("src", "image_f4efbe.png")
@@ -177,7 +176,7 @@ def generate_contract(data):
     if os.path.exists(bg1_path):
         c.drawImage(bg1_path, 0, 0, width=width, height=height)
     c.setFont("Helvetica-Bold", 10)
-    c.drawString(380, 714, f"{data['contract_no']}")
+    c.drawString(390, 715, f"{data['contract_no']}")
     c.setFont("Helvetica", 10)
     c.drawString(110, 663, f"{data['driver_name']}")
     c.drawString(505, 663, f"{data['dob']}")
@@ -188,9 +187,9 @@ def generate_contract(data):
     c.drawString(495, 591, f"{data['expiry_date']}")
     c.drawString(75, 555, f"{data['phone']}")
     c.drawString(295, 555, f"{data['email']}")
-    c.drawString(125, 417, f"{data['rent']}")
-    c.drawString(70, 362, f"{data['rate']}")
-    c.drawString(105, 319, f"{data['deposit']}")
+    c.drawString(135, 417, f"{data['rent']}")
+    c.drawString(75, 362, f"{data['rate']}")
+    c.drawString(115, 319, f"{data['deposit']}")
     c.drawString(135, 261, f"{data['start_date']}")
     c.drawString(190, 246, f"{data['expected_return']}")
     c.drawString(100, 193, f"{data['car_make']}")
@@ -303,11 +302,9 @@ if "db_trigger" not in st.session_state: st.session_state["db_trigger"] = False
 # --- Workspace Navigation Tabs ---
 tab1, tab2 = st.tabs(["📝 Permission Letter Creator", "📜 FA-IBI Contract Generator"])
 
-# Recalibrated helper controls featuring dedicated temporary session trackers
 def render_automation_controls(context_key):
     st.markdown("#### 🎛️ Data Automation Scanners")
     
-    # Render operational feedback banners right inside control headers
     if st.session_state["scan_success"] and st.session_state["scan_trigger"] == context_key:
         st.success(st.session_state["scan_success"])
     if st.session_state["db_success"] and st.session_state["db_trigger"] == context_key:
@@ -322,7 +319,6 @@ def render_automation_controls(context_key):
                 img = Image.open(uploaded_license).convert("RGB")
                 img_np = np.array(img)
                 h, w = img_np.shape[:2]
-                # High-speed processing scaling matrix limit target
                 if max(h, w) > 1200:
                     scale = 1200 / max(h, w)
                     img_np = cv2.resize(img_np, (int(w * scale), int(h * scale)), interpolation=cv2.INTER_AREA)
@@ -376,7 +372,6 @@ def render_automation_controls(context_key):
                 
     with col_fleet:
         fleet_options = ["-- Manual Entry --"] + [f"{v['reg']} ({v['model']})" for v in FLEET_VEHICLES]
-        # Evaluates the active selector choice vector index position to match layout rules
         current_sel_val = "-- Manual Entry --"
         if st.session_state.sel_reg:
             matched_opt = [o for o in fleet_options if o.startswith(st.session_state.sel_reg)]
@@ -444,7 +439,12 @@ with tab1:
 with tab2:
     render_automation_controls(context_key="tab2")
     st.markdown("---")
-    with st.form("contract_generation_form_v5"):
+    
+    # Store payload globally in session state to handle form button life cycle refreshes natively
+    if "contract_payload" not in st.session_state:
+        st.session_state.contract_payload = None
+
+    with st.form("contract_generation_form_v4"):
         st.subheader("Hirer Details Section")
         col_c1, col_c2 = st.columns(2)
         with col_c1:
@@ -472,55 +472,4 @@ with tab2:
         st.subheader("Hire Period Tracking")
         col_t1, col_t2 = st.columns(2)
         with col_t1: c_start = st.date_input("Date Hire Start", datetime.now(), format="DD/MM/YYYY")
-        with col_t2: c_return = st.date_input("Expected Date of Vehicle Return", datetime.now(), format="DD/MM/YYYY")
-
-        st.markdown("---")
-        st.subheader("Hire Vehicle Parameters")
-        col_v1, col_v2, col_v3 = st.columns(3)
-        with col_v1: c_make = st.text_input("Vehicle Make", value=st.session_state.sel_make)
-        with col_v2: c_reg = st.text_input("Reg No", value=st.session_state.sel_reg)
-        with col_v3: c_model_val = st.text_input("Model Specific", value=st.session_state.sel_model)
-
-        c_submitted = st.form_submit_button("Generate Complete 2-Page Contract")
-
-    if c_submitted:
-        c_payload = {
-            "contract_no": c_contract_no.upper(),
-            "date": c_date.strftime("%d/%m/%Y"),
-            "driver_name": c_name.upper(),
-            "address": c_address.upper(),
-            "postcode": c_postcode.upper(),
-            "dob": c_dob,
-            "license_no": c_licence_no.upper(),
-            "expiry_date": c_expiry,
-            "issuing_authority": c_authority.upper(),
-            "phone": c_phone,
-            "email": c_email.upper(),
-            "rent": c_rent,
-            "rate": c_rate,
-            "deposit": c_deposit,
-            "start_date": c_start.strftime("%d/%m/%Y"),
-            "expected_return": c_return.strftime("%d/%m/%Y"),
-            "registration": format_uk_reg(c_reg),
-            "car_make": c_make.upper(),
-            "car_model": c_model_val.upper()
-        }
-        contract_pdf_out = generate_contract(c_payload)
-        with open(contract_pdf_out, "rb") as f:
-            st.download_button("Download Completed 2-Page Contract PDF", data=f, file_name=f"FA_IBI_Contract_{c_contract_no}.pdf", mime="application/pdf")
-
-# --- HIGH-OVERRIDE VISUAL MASK PANEL ---
-st.markdown("""
-    <div class="vch-branding-cover-fixed">Powered By <a href="https://virtualcarhire.pages.dev/" target="_blank">Virtual Car Hire</a></div>
-    <script>
-    function clearWatermarks() {
-        const rootDoc = window.parent.document;
-        const targetBadge = rootDoc.querySelector('div[class*="viewerBadge"]') || rootDoc.querySelector('.viewerBadge_container__1743q');
-        if (targetBadge) {
-            targetBadge.style.setProperty('display', 'none', 'important');
-            targetBadge.style.setProperty('opacity', '0', 'important');
-        }
-    }
-    setInterval(clearWatermarks, 250);
-    </script>
-""", unsafe_allow_html=True)
+        with col_
