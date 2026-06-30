@@ -89,7 +89,7 @@ FLEET_VEHICLES = [
     {"reg": "SF19 WPW", "model": "MERCEDES-BENZ VITO "},
     {"reg": "TD19 5NN", "model": "MERCEDES-BENZ E220D "},
     {"reg": "WG74 KFJ", "model": "MERCEDES-BENZ EQE 300"},
-    {"reg": "IH74 E3F", "model": "MERCEDES-BENZ EQE 300 "},
+    {"reg": "IH74 E3F", "model": "MERCEDES-BENZ EQE 300"},
     {"reg": "IHN2 0E3", "model": "TESLA MODEL 3 "},
     {"reg": "IN20 NKU", "model": "MERCEDES-BENZ E300 "},
     {"reg": "WR16 UED", "model": "MERCEDES-BENZ VITO T"},
@@ -124,28 +124,21 @@ def generate_permission_letter(data):
     output_filename = "Permission_Letter.pdf"
     c = canvas.Canvas(output_filename, pagesize=letter)
     width, height = letter
-
     bg_path = os.path.join("src", "image_f4efbe.png")
     sig_path = os.path.join("src", "signature.png")
-
     if os.path.exists(bg_path):
         c.drawImage(bg_path, 0, 0, width=width, height=height)
-
     c.setFont("Helvetica", 11)
     c.drawRightString(width - 54, 595, data["date"])
-
     c.setFont("Helvetica-Bold", 22)
     c.drawCentredString(width / 2, 550, "PERMISSION LETTER")
     c.setFont("Helvetica", 11)
     c.drawString(54, 520, "To Whom It May Concern,")
-
     c.drawString(54, 490, "We confirm that the below vehicle can be used for the carriage of passengers for hire and reward by prior")
     line2_text = f"appointments (private hire) as specified on insurance policy: {data['insurance_policy']}"
     c.drawString(54, 475, line2_text)
-
     c.drawString(54, 460, "We authorise and give permission to the following individual to use the vehicle for all private hire bookings")
     c.drawString(54, 445, "from UBER, BOLT, OLA , FREE NOW app , WHEELY and other private hire operators.")
-
     fields = [
         ("Vehicle Registration", data["registration"]),
         ("Make and Model", data["make_model"]),
@@ -158,23 +151,18 @@ def generate_permission_letter(data):
         c.setFont("Helvetica", 11)
         c.drawString(54, y, f"{label} :")
         c.drawString(180, y, val)
-
     c.drawString(54, 275, "Hire start date.")
     c.drawString(145, 275, ":")
     c.drawString(160, 275, data["start_date"])
     c.drawString(54, 260, "Hire end date")
     c.drawString(145, 260, ":")
     c.drawString(160, 260, data["end_date"])
-
     c.drawString(54, 220, "Regards,")
-
     if os.path.exists(sig_path):
         c.drawImage(sig_path, 40, 120, width=280, height=115, mask='auto')
-
     c.setFont("Helvetica", 11)
     c.drawString(54, 115, "Muhammad Sohail Qureshi")
     c.drawString(54, 100, "Director(FA-IBI LTD)")
-
     c.save()
     return output_filename
 
@@ -182,19 +170,14 @@ def generate_contract(data):
     output_filename = "FA_IBI_Contract.pdf"
     c = canvas.Canvas(output_filename, pagesize=letter)
     width, height = letter
-
     bg1_path = os.path.join("src", "Contract Blank.png")
     bg2_path = os.path.join("src", "Contarct Blank 2.png")
 
-    # --- PAGE 1 ---
     if os.path.exists(bg1_path):
         c.drawImage(bg1_path, 0, 0, width=width, height=height)
-    
     c.setFont("Helvetica-Bold", 10)
     c.drawString(380, 714, f"{data['contract_no']}")
-
     c.setFont("Helvetica", 10)
-    # Recalibrated coordinate system maps to fit inside the blank lines perfectly
     c.drawString(110, 663, f"{data['driver_name']}")
     c.drawString(505, 663, f"{data['dob']}")
     c.drawString(100, 627, f"{data['address']}")
@@ -204,33 +187,23 @@ def generate_contract(data):
     c.drawString(495, 591, f"{data['expiry_date']}")
     c.drawString(75, 555, f"{data['phone']}")
     c.drawString(295, 555, f"{data['email']}")
-
-    # Hire Payments Row
     c.drawString(125, 417, f"{data['rent']}")
     c.drawString(70, 362, f"{data['rate']}")
     c.drawString(105, 319, f"{data['deposit']}")
-
-    # Hire Period Row
     c.drawString(135, 261, f"{data['start_date']}")
     c.drawString(190, 246, f"{data['expected_return']}")
-
-    # Vehicle Form Details Row
     c.drawString(100, 193, f"{data['car_make']}")
     c.drawString(440, 193, f"{data['registration']}")
     c.drawString(505, 193, f"{data['car_model']}")
     c.drawString(85, 108, f"{data['date']}")
-
     c.showPage()
 
-    # --- PAGE 2 ---
     if os.path.exists(bg2_path):
         c.drawImage(bg2_path, 0, 0, width=width, height=height)
-
     c.setFont("Helvetica-Bold", 10)
     c.drawString(145, 742, f"{data['contract_no']}")
     c.drawString(340, 742, f"{data['registration']}")
     c.drawString(235, 34, f"{data['date']}")
-
     c.save()
     return output_filename
 
@@ -268,6 +241,31 @@ st.markdown("""
         font-weight: bold !important;
         text-decoration: none !important;
     }
+    
+    /* Dynamic adjustments to make file uploader text alignment clean and inline */
+    [data-testid="stFileUploader"] {
+        max-width: 100%;
+    }
+    [data-testid="stFileUploaderDropzone"] {
+        padding: 0.5rem 1rem !important;
+        display: flex !important;
+        flex-direction: row !important;
+        align-items: center !important;
+        justify-content: flex-start !important;
+        gap: 15px !important;
+    }
+    [data-testid="stFileUploaderDropzone"] > div {
+        margin: 0 !important;
+        padding: 0 !important;
+    }
+    /* Styles the text size hint to display cleanly adjacent to the input button */
+    [data-testid="stFileUploaderDropzone"] [data-testid="stTypography"] {
+        font-size: 11px !important;
+        color: #888888 !important;
+        margin-left: auto !important;
+        white-space: nowrap;
+    }
+    
     @media screen and (max-width: 768px) {
         input, select, textarea, .stSelectbox, div[data-baseweb="select"] {
             font-size: 16px !important;
@@ -287,7 +285,6 @@ if not st.session_state["hardware_authenticated"]:
     col_gate, _ = st.columns([1, 2])
     with col_gate:
         access_code = st.text_input("System Access", type="password", label_visibility="collapsed", placeholder="Enter key...")
-    
     if access_code == st.secrets["ACCESS_KEY"]:
         st.session_state["hardware_authenticated"] = True
         st.query_params["session"] = "active"
@@ -305,15 +302,13 @@ for key in ["ocr_name", "ocr_licence", "ocr_address", "ocr_postcode", "ocr_dob",
 # --- Workspace Navigation Tabs ---
 tab1, tab2 = st.tabs(["📝 Permission Letter Creator", "📜 FA-IBI Contract Generator"])
 
-# Helper macro to build scanner + selector controls under navbar
-def render_automation_controls():
+# Recalibrated helper function utilizing distinct contextual keys per tab view instance
+def render_automation_controls(context_key):
     st.markdown("#### 🎛️ Data Automation Scanners")
-    
-    # Compact file selector alignment mapping
     col_scan, col_fleet = st.columns([1, 1])
     
     with col_scan:
-        uploaded_license = st.file_uploader("📷 Driver's License Scanner", type=["jpg", "png", "jpeg"])
+        uploaded_license = st.file_uploader("📷 Driver's License Scanner", type=["jpg", "png", "jpeg"], key=f"uploader_{context_key}")
         if uploaded_license is not None and pytesseract is not None:
             with st.spinner("Scanning data matrix..."):
                 img = Image.open(uploaded_license).convert("RGB")
@@ -322,16 +317,13 @@ def render_automation_controls():
                 if max(h, w) < 1600:
                     scale = 1600 / max(h, w)
                     img_np = cv2.resize(img_np, (int(w * scale), int(h * scale)), interpolation=cv2.INTER_CUBIC)
-
                 gray = cv2.cvtColor(img_np, cv2.COLOR_RGB2GRAY)
                 _, thresh = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
                 custom_config = r'--oem 3 --psm 6'
                 raw_ocr_string = pytesseract.image_to_string(thresh, config=custom_config)
-
                 lines = [line.strip() for line in raw_ocr_string.split("\n") if line.strip()]
                 extracted_last, extracted_first, extracted_licence, extracted_address_chunks = "", "", "", []
                 extracted_dob, extracted_expiry = "", ""
-
                 field1_re = re.compile(r'^[1lI]\.?\s+([A-Z][A-Z \'-]+)$')
                 field2_re = re.compile(r'^2\.?\s+([A-Z][A-Z \'-]+)$')
                 field4b_re = re.compile(r'^4[B8]\.?\s*([0-9./-]+)')
@@ -339,23 +331,15 @@ def render_automation_controls():
                 field5_re = re.compile(r'^5\.?\s+([A-Z0-9]{8,20})$')
                 field8_re = re.compile(r'^[8B]\.?\s+(.+)$')
                 stop_prefixes = ("3", "4", "5", "6", "7", "9", "UK", "DRIVING", "DVLA")
-
                 for index, raw_line in enumerate(lines):
                     item_upper = raw_line.strip().upper()
-                    m1 = field1_re.match(item_upper)
-                    if m1 and not extracted_last: extracted_last = m1.group(1).strip(); continue
-                    m2 = field2_re.match(item_upper)
-                    if m2 and not extracted_first: extracted_first = m2.group(1).strip(); continue
-                    m4a = field4a_re.match(item_upper)
-                    if m4a and not extracted_dob: extracted_dob = m4a.group(1).strip(); continue
-                    m4b = field4b_re.match(item_upper)
-                    if m4b and not extracted_expiry: extracted_expiry = m4b.group(1).strip(); continue
-                    m5 = field5_re.match(item_upper)
-                    if m5 and not extracted_licence: extracted_licence = re.sub(r'\s', '', m5.group(1)); continue
-                    
-                    m8 = field8_re.match(item_upper)
-                    if m8:
-                        first_line_addr = m8.group(1).strip()
+                    if field1_re.match(item_upper) and not extracted_last: extracted_last = field1_re.match(item_upper).group(1).strip(); continue
+                    if field2_re.match(item_upper) and not extracted_first: extracted_first = field2_re.match(item_upper).group(1).strip(); continue
+                    if field4a_re.match(item_upper) and not extracted_dob: extracted_dob = field4a_re.match(item_upper).group(1).strip(); continue
+                    if field4b_re.match(item_upper) and not extracted_expiry: extracted_expiry = field4b_re.match(item_upper).group(1).strip(); continue
+                    if field5_re.match(item_upper) and not extracted_licence: extracted_licence = re.sub(r'\s', '', field5_re.match(item_upper).group(1)); continue
+                    if field8_re.match(item_upper):
+                        first_line_addr = field8_re.match(item_upper).group(1).strip()
                         if len(first_line_addr) > 2: extracted_address_chunks.append(first_line_addr)
                         for step in range(1, 5):
                             if index + step < len(lines):
@@ -363,23 +347,21 @@ def render_automation_controls():
                                 if next_chunk.startswith(stop_prefixes): break
                                 if len(next_chunk) > 3: extracted_address_chunks.append(next_chunk)
                         continue
-
                 full_addr_str = ", ".join(extracted_address_chunks)
                 postcode_match = re.search(r'\b([A-Z]{1,2}[0-9][A-Z0-9]?\s?[0-9][A-Z]{2})\b', full_addr_str)
                 if postcode_match:
                     st.session_state.ocr_postcode = postcode_match.group(1).strip()
                     full_addr_str = full_addr_str.replace(postcode_match.group(1), "").strip(", ")
-
                 if extracted_first or extracted_last: st.session_state.ocr_name = f"{extracted_first} {extracted_last}".strip()
-                if extracted_licence: st.session_state.ocr_licence = extracted_licence
+                if QQ := extracted_licence: st.session_state.ocr_licence = QQ
                 if extracted_address_chunks: st.session_state.ocr_address = full_addr_str
                 if extracted_dob: st.session_state.ocr_dob = extracted_dob
                 if extracted_expiry: st.session_state.ocr_expiry = extracted_expiry
                 st.rerun()
-
+                
     with col_fleet:
         fleet_options = ["-- Manual Entry --"] + [f"{v['reg']} ({v['model']})" for v in FLEET_VEHICLES]
-        selected_vehicle = st.selectbox("🚗 Select Vehicle from Fleet", fleet_options)
+        selected_vehicle = st.selectbox("🚗 Select Vehicle from Fleet", fleet_options, key=f"fleet_{context_key}")
         if selected_vehicle != "-- Manual Entry --":
             reg_match = selected_vehicle.split(" (")[0]
             matched_car = next((v for v in FLEET_VEHICLES if v["reg"] == reg_match), None)
@@ -393,7 +375,7 @@ def render_automation_controls():
 # --- TAB 1: PERMISSION LETTER WORKFLOW ---
 # ==========================================
 with tab1:
-    render_automation_controls()
+    render_automation_controls(context_key="tab1")
     st.markdown("---")
     with st.form("permission_letter_form_v4"):
         col1, col2 = st.columns(2)
@@ -407,7 +389,6 @@ with tab1:
             p_licence = st.text_input("Driving Licence No", value=st.session_state.ocr_licence)
             p_start = st.date_input("Hire Start Date", datetime.now(), format="DD/MM/YYYY")
             p_end = st.date_input("Hire End Date", datetime.now(), format="DD/MM/YYYY")
-
         p_address = st.text_area("Driver Residential Address", value=st.session_state.ocr_address)
         p_submitted = st.form_submit_button("Generate Permission Letter PDF")
 
@@ -431,7 +412,7 @@ with tab1:
 # --- TAB 2: FA-IBI CONTRACT WORKFLOW ----
 # ==========================================
 with tab2:
-    render_automation_controls()
+    render_automation_controls(context_key="tab2")
     st.markdown("---")
     with st.form("contract_generation_form_v4"):
         st.subheader("Hirer Details Section")
@@ -501,7 +482,6 @@ with tab2:
 # --- HIGH-OVERRIDE VISUAL MASK PANEL ---
 st.markdown("""
     <div class="vch-branding-cover-fixed">Powered By <a href="https://virtualcarhire.pages.dev/" target="_blank">Virtual Car Hire</a></div>
-    
     <script>
     function clearWatermarks() {
         const rootDoc = window.parent.document;
