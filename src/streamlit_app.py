@@ -4,10 +4,9 @@ import re
 import cv2
 import numpy as np
 from PIL import Image
-from datetime import datetime
+from datetime import datetime, date
 from reportlab.lib.pagesizes import letter
 from reportlab.pdfgen import canvas
-import streamlit.components.v1 as components
 
 try:
     import pytesseract
@@ -113,8 +112,15 @@ def format_uk_reg(text):
         return f"{clean[:4]} {clean[4:]}".strip()
     return clean
 
-# --- PDF Generation Logic ---
-def generate_pdf(data):
+def split_make_model(full_string):
+    full_string = full_string.strip()
+    parts = full_string.split(" ", 1)
+    if len(parts) == 2:
+        return parts[0].upper(), parts[1].upper()
+    return parts[0].upper(), ""
+
+# --- PDF Generation Modules ---
+def generate_permission_letter(data):
     output_filename = "Permission_Letter.pdf"
     c = canvas.Canvas(output_filename, pagesize=letter)
     width, height = letter
@@ -172,10 +178,64 @@ def generate_pdf(data):
     c.save()
     return output_filename
 
-# --- Web Interface Design ---
-st.set_page_config(page_title="FA-IBI Generator", layout="centered")
+def generate_contract(data):
+    output_filename = "FA_IBI_Contract.pdf"
+    c = canvas.Canvas(output_filename, pagesize=letter)
+    width, height = letter
 
-# Style Override Block
+    bg1_path = os.path.join("src", "Contract Blank.png")
+    bg2_path = os.path.join("src", "Contarct Blank 2.png")
+
+    # --- PAGE 1 ---
+    if os.path.exists(bg1_path):
+        c.drawImage(bg1_path, 0, 0, width=width, height=height)
+    
+    # Custom coordinate mapping for structural form blanks
+    c.setFont("Helvetica-Bold", 10)
+    c.drawString(450, 715, f"{data['contract_no']}")
+    c.drawString(75, 715, f"{data['date']}")
+
+    c.setFont("Helvetica", 10)
+    c.drawString(130, 640, f"{data['driver_name']}")
+    c.drawString(130, 615, f"{data['address']}")
+    c.drawString(130, 590, f"{data['postcode']}")
+    c.drawString(390, 590, f"{data['dob']}")
+    
+    c.drawString(130, 545, f"{data['license_no']}")
+    c.drawString(390, 545, f"{data['expiry_date']}")
+    c.drawString(130, 520, f"{data['issuing_authority']}")
+
+    c.drawString(130, 475, f"{data['phone']}")
+    c.drawString(390, 475, f"{data['email']}")
+
+    c.drawString(150, 400, f"{data['rent']}")
+    c.drawString(150, 375, f"{data['rate']}")
+    c.drawString(150, 350, f"{data['deposit']}")
+
+    c.drawString(150, 280, f"{data['start_date']}")
+    c.drawString(400, 280, f"{data['expected_return']}")
+
+    c.drawString(130, 205, f"{data['car_make']}")
+    c.drawString(390, 205, f"{data['car_model']}")
+    c.drawString(130, 180, f"{data['registration']}")
+
+    c.showPage()
+
+    # --- PAGE 2 ---
+    if os.path.exists(bg2_path):
+        c.drawImage(bg2_path, 0, 0, width=width, height=height)
+
+    c.setFont("Helvetica-Bold", 10)
+    c.drawString(450, 715, f"{data['contract_no']}")
+    c.drawString(75, 715, f"{data['date']}")
+    c.drawString(130, 670, f"{data['registration']}")
+
+    c.save()
+    return output_filename
+
+# --- Web Interface Design ---
+st.set_page_config(page_title="FA-IBI Panel", layout="centered")
+
 st.markdown("""
     <style>
     #MainMenu, footer, header, [data-testid="stToolbar"], .viewerBadge_container__1743q, [class*="viewerBadge"] {
@@ -215,12 +275,11 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# --- TOTAL SECURE SESSION DEVICE SYNC ---
+# --- SECURE SESSION DEVICE SYNC ---
 if "hardware_authenticated" not in st.session_state:
     st.session_state["hardware_authenticated"] = False
 
-# Fallback parameter catch to clean URL routing string errors natively
-if st.query_params.get("verified") == "true":
+if st.query_params.get("session") == "active":
     st.session_state["hardware_authenticated"] = True
 
 if not st.session_state["hardware_authenticated"]:
@@ -230,26 +289,26 @@ if not st.session_state["hardware_authenticated"]:
     
     if access_code == st.secrets["ACCESS_KEY"]:
         st.session_state["hardware_authenticated"] = True
-        st.query_params["verified"] = "true"
+        st.query_params["session"] = "active"
         st.rerun()
     else:
         st.stop()
 
-# --- Core App Layout ---
-st.title("FA-IBI Letter Generator")
+# --- Core App Workspace Header ---
+st.title("FA-IBI Document Workspace")
 
-if "ocr_name" not in st.session_state: st.session_state.ocr_name = ""
-if "ocr_licence" not in st.session_state: st.session_state.ocr_licence = ""
-if "ocr_address" not in st.session_state: st.session_state.ocr_address = ""
-if "ocr_raw_debug" not in st.session_state: st.session_state.ocr_raw_debug = ""
-if "sel_reg" not in st.session_state: st.session_state.sel_reg = ""
-if "sel_model" not in st.session_state: st.session_state.sel_model = ""
+# Modern Tab Switching Controller
+tab1, tab2 = st.tabs(["📝 Permission Letter Generator", "📜 FA-IBI Contract Generator"])
 
-# --- 1. License Scanner ---
-uploaded_license = st.file_uploader("📷 Secure Driver's License Scanner", type=["jpg", "png", "jpeg"])
+# Initialize Deep Global Memory Buffers
+for key in ["ocr_name", "ocr_licence", "ocr_address", "ocr_postcode", "ocr_dob", "ocr_expiry", "sel_reg", "sel_make", "sel_model"]:
+    if key not in st.session_state: st.session_state[key] = ""
+
+# --- SHARED SECURE LICENSE SCANNER PROCESSING ENGINE ---
+uploaded_license = st.file_uploader("📷 Secure Driver's License Text Scanner", type=["jpg", "png", "jpeg"])
 
 if uploaded_license is not None and pytesseract is not None:
-    with st.spinner("Scanning license..."):
+    with st.spinner("Processing scanner arrays..."):
         img = Image.open(uploaded_license).convert("RGB")
         img_np = np.array(img)
 
@@ -263,17 +322,15 @@ if uploaded_license is not None and pytesseract is not None:
 
         custom_config = r'--oem 3 --psm 6'
         raw_ocr_string = pytesseract.image_to_string(thresh, config=custom_config)
-        st.session_state.ocr_raw_debug = raw_ocr_string
 
         lines = [line.strip() for line in raw_ocr_string.split("\n") if line.strip()]
-
-        extracted_last = ""
-        extracted_first = ""
-        extracted_licence = ""
-        extracted_address_chunks = []
+        extracted_last, extracted_first, extracted_licence, extracted_address_chunks = "", "", "", []
+        extracted_dob, extracted_expiry = "", ""
 
         field1_re = re.compile(r'^[1lI]\.?\s+([A-Z][A-Z \'-]+)$')
         field2_re = re.compile(r'^2\.?\s+([A-Z][A-Z \'-]+)$')
+        field4b_re = re.compile(r'^4[B8]\.?\s*([0-9./-]+)')
+        field4a_re = re.compile(r'^4[A4]\.?\s*([0-9./-]+)')
         field5_re = re.compile(r'^5\.?\s+([A-Z0-9]{8,20})$')
         field8_re = re.compile(r'^[8B]\.?\s+(.+)$')
         stop_prefixes = ("3", "4", "5", "6", "7", "9", "UK", "DRIVING", "DVLA")
@@ -289,6 +346,16 @@ if uploaded_license is not None and pytesseract is not None:
             m2 = field2_re.match(item_upper)
             if m2 and not extracted_first:
                 extracted_first = m2.group(1).strip()
+                continue
+
+            m4a = field4a_re.match(item_upper)
+            if m4a and not extracted_dob:
+                extracted_dob = m4a.group(1).strip()
+                continue
+
+            m4b = field4b_re.match(item_upper)
+            if m4b and not extracted_expiry:
+                extracted_expiry = m4b.group(1).strip()
                 continue
 
             m5 = field5_re.match(item_upper)
@@ -310,93 +377,173 @@ if uploaded_license is not None and pytesseract is not None:
                             extracted_address_chunks.append(next_chunk)
                 continue
 
-            if not extracted_licence:
-                bare_lic = re.search(r'\b[A-Z9]{5}\d{6}[A-Z9]{2}[A-Z0-9]{2,3}\b', item_upper.replace(" ", ""))
-                if bare_lic:
-                    extracted_licence = bare_lic.group(0)
+        # Postcode parser extraction module
+        full_addr_str = ", ".join(extracted_address_chunks)
+        postcode_match = re.search(r'\b([A-Z]{1,2}[0-9][A-Z0-9]?\s?[0-9][A-Z]{2})\b', full_addr_str)
+        
+        if postcode_match:
+            st.session_state.ocr_postcode = postcode_match.group(1).strip()
+            full_addr_str = full_addr_str.replace(postcode_match.group(1), "").strip(", ")
 
         if extracted_first or extracted_last:
             st.session_state.ocr_name = f"{extracted_first} {extracted_last}".strip()
         if extracted_licence:
             st.session_state.ocr_licence = extracted_licence
         if extracted_address_chunks:
-            st.session_state.ocr_address = ", ".join(extracted_address_chunks)
+            st.session_state.ocr_address = full_addr_str
+        if extracted_dob:
+            st.session_state.ocr_dob = extracted_dob
+        if extracted_expiry:
+            st.session_state.ocr_expiry = extracted_expiry
 
-        if extracted_first or extracted_last or extracted_licence or extracted_address_chunks:
-            st.success("Analysis complete! Fields mapped smoothly.")
-        else:
-            st.warning("Couldn't confidently match fields — check raw text and fill manually.")
-
+        st.success("Scanner pipeline arrays mapped smoothly over memory matrices!")
         uploaded_license = None
 
-if st.session_state.ocr_raw_debug:
-    with st.expander("🔍 Raw OCR text (for debugging)"):
-        st.text(st.session_state.ocr_raw_debug)
-
-# --- 2. Live Fleet Selector Menu ---
+# --- SHARED FLEET VEHICLE DATABASE DROPDOWN LOGIC ---
 options = ["-- Manual Entry --"] + [f"{v['reg']} ({v['model']})" for v in FLEET_VEHICLES]
-selected_vehicle = st.selectbox("Search/Select Vehicle from Fleet", options)
+selected_vehicle = st.selectbox("Search/Select Vehicle from Fleet Database", options)
 
 if selected_vehicle != "-- Manual Entry --":
     reg_match = selected_vehicle.split(" (")[0]
     matched_car = next((v for v in FLEET_VEHICLES if v["reg"] == reg_match), None)
     if matched_car:
         st.session_state.sel_reg = matched_car["reg"]
-        st.session_state.sel_model = matched_car["model"]
+        make_part, model_part = split_make_model(matched_car["model"])
+        st.session_state.sel_make = make_part
+        st.session_state.sel_model = model_part
 else:
-    st.session_state.sel_reg = ""
-    st.session_state.sel_model = ""
+    st.session_state.sel_reg, st.session_state.sel_make, st.session_state.sel_model = "", "", ""
 
-# --- 3. Entry Form Layout ---
-with st.form("letter_form"):
-    col1, col2 = st.columns(2)
-    with col1:
-        date_obj = st.date_input("Document Date", datetime.now(), format="DD/MM/YYYY")
-        insurance = st.text_input("Insurance Policy No", "HAVFL-000211")
-        reg = st.text_input("Vehicle Registration", value=st.session_state.sel_reg)
-        model = st.text_input("Make and Model", value=st.session_state.sel_model)
-    with col2:
-        name = st.text_input("Driver Name", value=st.session_state.ocr_name)
-        licence = st.text_input("Driving Licence No", value=st.session_state.ocr_licence)
-        start_obj = st.date_input("Hire Start Date", datetime.now(), format="DD/MM/YYYY")
-        end_obj = st.date_input("Hire End Date", datetime.now(), format="DD/MM/YYYY")
+# ==========================================
+# --- TAB 1: PERMISSION LETTER WORKFLOW ---
+# ==========================================
+with tab1:
+    with st.form("permission_letter_form"):
+        col1, col2 = st.columns(2)
+        with col1:
+            p_date = st.date_input("Document Issue Date", datetime.now(), format="DD/MM/YYYY", key="p_date")
+            p_insurance = st.text_input("Insurance Policy No", "HAVFL-000211")
+            p_reg = st.text_input("Vehicle Registration", value=st.session_state.sel_reg, key="p_reg")
+            p_model = st.text_input("Make & Model", value=f"{st.session_state.sel_make} {st.session_state.sel_model}".strip(), key="p_model")
+        with col2:
+            p_name = st.text_input("Driver Full Name", value=st.session_state.ocr_name, key="p_name")
+            p_licence = st.text_input("Driving Licence No", value=st.session_state.ocr_licence, key="p_licence")
+            p_start = st.date_input("Hire Start Date", datetime.now(), format="DD/MM/YYYY", key="p_start")
+            p_end = st.date_input("Hire End Date", datetime.now(), format="DD/MM/YYYY", key="p_end")
 
-    address = st.text_area("Driver Address", value=st.session_state.ocr_address)
-    submitted = st.form_submit_button("Generate PDF")
+        p_address = st.text_area("Driver Residential Address", value=st.session_state.ocr_address, key="p_address")
+        p_submitted = st.form_submit_button("Generate Permission Letter PDF")
 
-if submitted:
-    formatted_reg = format_uk_reg(reg)
-    payload = {
-        "date": date_obj.strftime("%d/%m/%Y"),
-        "insurance_policy": insurance,
-        "registration": formatted_reg,
-        "make_model": model.upper(),
-        "driver_name": name.upper(),
-        "address": address.upper(),
-        "license_no": licence.upper(),
-        "start_date": start_obj.strftime("%d/%m/%Y"),
-        "end_date": end_obj.strftime("%d/%m/%Y")
-    }
+    if p_submitted:
+        p_payload = {
+            "date": p_date.strftime("%d/%m/%Y"),
+            "insurance_policy": p_insurance,
+            "registration": format_uk_reg(p_reg),
+            "make_model": p_model.upper(),
+            "driver_name": p_name.upper(),
+            "address": p_address.upper(),
+            "license_no": p_licence.upper(),
+            "start_date": p_start.strftime("%d/%m/%Y"),
+            "end_date": p_end.strftime("%d/%m/%Y")
+        }
+        pdf_out = generate_permission_letter(p_payload)
+        with open(pdf_out, "rb") as f:
+            st.download_button("Download Permission Letter PDF", data=f, file_name="Permission_Letter.pdf", mime="application/pdf")
 
-    pdf_path = generate_pdf(payload)
-    with open(pdf_path, "rb") as file:
-        st.download_button(label="Download Completed PDF", data=file, file_name="Permission_Letter.pdf", mime="application/pdf")
+# ==========================================
+# --- TAB 2: FA-IBI CONTRACT WORKFLOW ----
+# ==========================================
+with tab2:
+    with st.form("contract_generation_form"):
+        st.subheader("Page 1: Contract Parameters & Verification")
+        
+        c_contract_no = st.text_input("Contract Number", value="FA-IBI-2026-001")
+        c_date = st.date_input("Contract Date", datetime.now(), format="DD/MM/YYYY")
+        
+        col_c1, col_c2 = st.columns(2)
+        with col_c1:
+            c_name = st.text_input("Full Name", value=st.session_state.ocr_name)
+            c_address = st.text_area("Address (Street & Town)", value=st.session_state.ocr_address)
+            c_postcode = st.text_input("Postcode", value=st.session_state.ocr_postcode)
+            c_dob = st.text_input("Date of Birth", value=st.session_state.ocr_dob, placeholder="DD/MM/YYYY")
+        with col_c2:
+            c_licence_no = st.text_input("Licence No", value=st.session_state.ocr_licence)
+            c_expiry = st.text_input("Date of Expiry", value=st.session_state.ocr_expiry, placeholder="DD/MM/YYYY")
+            c_authority = st.text_input("Issuing Authority", value="DVLA")
+            c_phone = st.text_input("Phone Number")
+            c_email = st.text_input("Email Address")
 
-# --- HIGH-OVERRIDE MASKING LAYER PANEL ---
+        st.markdown("---")
+        st.subheader("Hire Payment Parameters")
+        col_p1, col_p2, col_p3 = st.columns(3)
+        with col_p1:
+            c_rent = st.text_input("The Rent (£ / Week)", value="£220")
+        with col_p2:
+            c_rate = st.text_input("The Rate (Per Mile Over Limit)", value="20p/mile")
+        with col_p3:
+            c_deposit = st.text_input("Deposit Paid (£)", value="£500")
+
+        st.markdown("---")
+        st.subheader("Duration & Vehicle Specifics")
+        col_t1, col_t2 = st.columns(2)
+        with col_t1:
+            c_start = st.date_input("Hire Start Date", datetime.now(), format="DD/MM/YYYY")
+        with col_t2:
+            c_return = st.date_input("Expected Date of Vehicle Returned", datetime.now(), format="DD/MM/YYYY")
+
+        col_v1, col_v2, col_v3 = st.columns(3)
+        with col_v1:
+            c_reg = st.text_input("Vehicle Reg No", value=st.session_state.sel_reg)
+        with col_v2:
+            c_make = st.text_input("Vehicle Make", value=st.session_state.sel_make)
+        with col_v3:
+            c_model_val = st.text_input("Vehicle Model", value=st.session_state.sel_model)
+
+        st.markdown("---")
+        st.subheader("Page 2: Automation Parameters")
+        st.info("🔄 Contract Number, Car Registration, and Contract Date values map over onto Page 2 automatically.")
+
+        c_submitted = st.form_submit_button("Generate 2-Page Contract PDF")
+
+    if c_submitted:
+        c_payload = {
+            "contract_no": c_contract_no.upper(),
+            "date": c_date.strftime("%d/%m/%Y"),
+            "driver_name": c_name.upper(),
+            "address": c_address.upper(),
+            "postcode": c_postcode.upper(),
+            "dob": c_dob,
+            "license_no": c_licence_no.upper(),
+            "expiry_date": c_expiry,
+            "issuing_authority": c_authority.upper(),
+            "phone": c_phone,
+            "email": c_email.upper(),
+            "rent": c_rent,
+            "rate": c_rate,
+            "deposit": c_deposit,
+            "start_date": c_start.strftime("%d/%m/%Y"),
+            "expected_return": c_return.strftime("%d/%m/%Y"),
+            "registration": format_uk_reg(c_reg),
+            "car_make": c_make.upper(),
+            "car_model": c_model_val.upper()
+        }
+        contract_pdf_out = generate_contract(c_payload)
+        with open(contract_pdf_out, "rb") as f:
+            st.download_button("Download Completed 2-Page Contract PDF", data=f, file_name=f"FA_IBI_Contract_{c_contract_no}.pdf", mime="application/pdf")
+
+# --- VISUAL BRAND MASKING COVER ---
 st.markdown("""
     <div class="vch-branding-cover-fixed">Powered By <a href="https://virtualcarhire.pages.dev/" target="_blank">Virtual Car Hire</a></div>
     
     <script>
-    function coverWatermark() {
+    function clearWatermarks() {
         const rootDoc = window.parent.document;
-        
-        // Wipe platform watermarks dynamically from screen memory layouts
-        const badge = rootDoc.querySelector('div[class*="viewerBadge"]') || rootDoc.querySelector('.viewerBadge_container__1743q');
-        if (badge) {
-            badge.style.setProperty('display', 'none', 'important');
-            badge.style.setProperty('opacity', '0', 'important');
+        const targetBadge = rootDoc.querySelector('div[class*="viewerBadge"]') || rootDoc.querySelector('.viewerBadge_container__1743q');
+        if (targetBadge) {
+            targetBadge.style.setProperty('display', 'none', 'important');
+            targetBadge.style.setProperty('opacity', '0', 'important');
         }
     }
-    setInterval(coverWatermark, 250);
+    setInterval(clearWatermarks, 250);
     </script>
 """, unsafe_allow_html=True)
