@@ -176,8 +176,15 @@ def generate_pdf(data):
 # --- Web Interface Design ---
 st.set_page_config(page_title="FA-IBI Generator", layout="centered")
 
+# Injection styling to completely kill Streamlit branding elements
 st.markdown("""
     <style>
+    #MainMenu {visibility: hidden;}
+    footer {visibility: hidden;}
+    header {visibility: hidden;}
+    [data-testid="stToolbar"] {visibility: hidden !important;}
+    .viewerBadge_container__1743q {display: none !important;}
+    
     @media screen and (max-width: 768px) {
         input, select, textarea, .stSelectbox, div[data-baseweb="select"] {
             font-size: 16px !important;
@@ -186,6 +193,15 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
+# Subtle, tiny key gate field positioned discreetly at the very top edge
+col_gate, _ = st.columns([1, 3])
+with col_gate:
+    access_code = st.text_input("System Access", type="password", label_visibility="collapsed", placeholder="Enter key...")
+
+if access_code != "FAIBI2026":
+    st.stop()  # Silently breaks compilation execution right here so the app looks empty to outsiders
+
+# --- Core App Layout Triggers once correct code is loaded ---
 st.title("FA-IBI Letter Generator")
 
 if "ocr_name" not in st.session_state: st.session_state.ocr_name = ""
@@ -195,7 +211,7 @@ if "ocr_raw_debug" not in st.session_state: st.session_state.ocr_raw_debug = ""
 if "sel_reg" not in st.session_state: st.session_state.sel_reg = ""
 if "sel_model" not in st.session_state: st.session_state.sel_model = ""
 
-# --- 1. License Scanner: pulls only fields 1 (surname), 2 (forenames), 5 (licence no), 8 (address) ---
+# --- 1. License Scanner ---
 uploaded_license = st.file_uploader("📷 Secure Driver's License Scanner", type=["jpg", "png", "jpeg"])
 
 if uploaded_license is not None and pytesseract is not None:
@@ -203,21 +219,16 @@ if uploaded_license is not None and pytesseract is not None:
         img = Image.open(uploaded_license).convert("RGB")
         img_np = np.array(img)
 
-        # Upscale small/compressed card photos so text has enough pixel height for Tesseract.
         h, w = img_np.shape[:2]
         if max(h, w) < 1600:
             scale = 1600 / max(h, w)
             img_np = cv2.resize(img_np, (int(w * scale), int(h * scale)), interpolation=cv2.INTER_CUBIC)
 
         gray = cv2.cvtColor(img_np, cv2.COLOR_RGB2GRAY)
-
-        # Otsu thresholding handles clean printed card text better than adaptive
-        # thresholding, which was fragmenting characters on busy card backgrounds.
         _, thresh = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
 
         custom_config = r'--oem 3 --psm 6'
         raw_ocr_string = pytesseract.image_to_string(thresh, config=custom_config)
-
         st.session_state.ocr_raw_debug = raw_ocr_string
 
         lines = [line.strip() for line in raw_ocr_string.split("\n") if line.strip()]
@@ -227,9 +238,6 @@ if uploaded_license is not None and pytesseract is not None:
         extracted_licence = ""
         extracted_address_chunks = []
 
-        # Field labels we care about: 1 (surname), 2 (forenames), 5 (licence no), 8 (address).
-        # [1lI] tolerates Tesseract misreading the digit "1" as a lowercase L or capital I,
-        # which is a very common OCR confusion on small card fonts.
         field1_re = re.compile(r'^[1lI]\.?\s+([A-Z][A-Z \'-]+)$')
         field2_re = re.compile(r'^2\.?\s+([A-Z][A-Z \'-]+)$')
         field5_re = re.compile(r'^5\.?\s+([A-Z0-9]{8,20})$')
@@ -268,7 +276,6 @@ if uploaded_license is not None and pytesseract is not None:
                             extracted_address_chunks.append(next_chunk)
                 continue
 
-            # Fallback: a bare 16-char UK licence number with no leading "5." label
             if not extracted_licence:
                 bare_lic = re.search(r'\b[A-Z9]{5}\d{6}[A-Z9]{2}[A-Z0-9]{2,3}\b', item_upper.replace(" ", ""))
                 if bare_lic:
@@ -284,7 +291,7 @@ if uploaded_license is not None and pytesseract is not None:
         if extracted_first or extracted_last or extracted_licence or extracted_address_chunks:
             st.success("Analysis complete! Fields mapped smoothly.")
         else:
-            st.warning("Couldn't confidently match fields — check the raw OCR text below and enter details manually if needed.")
+            st.warning("Couldn't confidently match fields — check raw text and fill manually.")
 
         uploaded_license = None
 
@@ -292,7 +299,7 @@ if st.session_state.ocr_raw_debug:
     with st.expander("🔍 Raw OCR text (for debugging)"):
         st.text(st.session_state.ocr_raw_debug)
 
-# --- 2. Live Fleet Auto-Population Selector Menu ---
+# --- 2. Live Fleet Selector Menu ---
 options = ["-- Manual Entry --"] + [f"{v['reg']} ({v['model']})" for v in FLEET_VEHICLES]
 selected_vehicle = st.selectbox("Search/Select Vehicle from Fleet", options)
 
@@ -306,7 +313,7 @@ else:
     st.session_state.sel_reg = ""
     st.session_state.sel_model = ""
 
-# --- 3. Main Data Dashboard Entry Form Layout ---
+# --- 3. Entry Form Layout ---
 with st.form("letter_form"):
     col1, col2 = st.columns(2)
     with col1:
