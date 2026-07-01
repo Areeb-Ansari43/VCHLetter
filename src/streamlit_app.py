@@ -1,7 +1,7 @@
 import streamlit as st
-import os, re, cv2, io
+import os, re, io
 import numpy as np
-from PIL import Image
+from PIL import Image, ImageFilter, ImageOps, ImageEnhance
 from datetime import datetime
 from reportlab.lib.pagesizes import letter
 from reportlab.pdfgen import canvas
@@ -11,7 +11,6 @@ try:
 except ImportError:
     pytesseract = None
 
-# Resolve src/ directory relative to this file so paths work on Streamlit Cloud
 SRC_DIR = os.path.dirname(os.path.abspath(__file__))
 
 # ─────────────────────────────────────────────
@@ -110,23 +109,20 @@ FLEET_VEHICLES = [
 ]
 
 # ─────────────────────────────────────────────
-#  UTILITY HELPERS
+#  HELPERS
 # ─────────────────────────────────────────────
 
 def format_uk_reg(text):
     clean = re.sub(r"[^A-Za-z0-9]", "", text).upper()
     return f"{clean[:4]} {clean[4:]}".strip() if len(clean) >= 4 else clean
 
-
 def split_make_model(s):
     parts = s.strip().split(" ", 1)
     return (parts[0].upper(), parts[1].upper()) if len(parts) == 2 else (parts[0].upper(), "")
 
-
 def clean_name(s):
     s = re.sub(r"[^A-Z '\-]", " ", s.upper())
     return " ".join(w for w in s.split() if len(w) > 1).strip()
-
 
 def clean_address(s):
     s = s.upper()
@@ -137,45 +133,15 @@ def clean_address(s):
     s = re.sub(r",\s*,+", ",", s)
     return s
 
-
 def extract_postcode(text):
     m = re.search(r"\b([A-Z]{1,2}[0-9][A-Z0-9]?\s*[0-9][A-Z]{2})\b", text.upper())
     return m.group(1).strip() if m else ""
 
-
 def first_date(fragment):
-    """Pull the first dd.mm.yyyy or dd/mm/yyyy date from a text fragment."""
     m = re.search(r"\d{1,2}[./\-]\d{1,2}[./\-]\d{2,4}", fragment)
     return m.group(0) if m else ""
 
-
-# ─────────────────────────────────────────────
-#  OCR ENGINE
-# ─────────────────────────────────────────────
-
-def run_ocr(uploaded_file) -> str:
-    img = Image.open(uploaded_file).convert("RGB")
-    arr = np.array(img)
-    h, w = arr.shape[:2]
-
-    # Upscale small images so characters have enough pixels for Tesseract
-    if max(h, w) < 1800:
-        scale = 1800 / max(h, w)
-        arr = cv2.resize(arr, (int(w * scale), int(h * scale)), interpolation=cv2.INTER_CUBIC)
-
-    gray = cv2.cvtColor(arr, cv2.COLOR_RGB2GRAY)
-
-    # CLAHE improves contrast on dark/real-world photos before thresholding
-    clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
-    enhanced = clahe.apply(gray)
-
-    _, thresh = cv2.threshold(enhanced, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-
-    return pytesseract.image_to_string(thresh, config=r"--oem 3 --psm 6")
-
-
 def _grab(blob, start_pats, end_pats):
-    """Find text between any start_pattern and end_pattern pair in the OCR blob."""
     for sp in start_pats:
         for ep in end_pats:
             m = re.search(sp + r"\s*(.*?)\s*" + ep, blob, re.DOTALL)
@@ -183,45 +149,54 @@ def _grab(blob, start_pats, end_pats):
                 return m.group(1).strip()
     return ""
 
+# ─────────────────────────────────────────────
+#  OCR — PIL only, no cv2
+# ─────────────────────────────────────────────
+
+def run_ocr(uploaded_file) -> str:
+    img = Image.open(uploaded_file).convert("RGB")
+
+    # Upscale small images
+    w, h = img.size
+    if max(w, h) < 1800:
+        scale = 1800 / max(w, h)
+        img = img.resize((int(w * scale), int(h * scale)), Image.LANCZOS)
+
+    # Greyscale → boost contrast → sharpen → threshold to pure B&W
+    img = ImageOps.grayscale(img)
+    img = ImageEnhance.Contrast(img).enhance(2.5)
+    img = img.filter(ImageFilter.SHARPEN)
+    img = img.point(lambda p: 255 if p > 140 else 0)
+
+    return pytesseract.image_to_string(img, config=r"--oem 3 --psm 6")
+
 
 def parse_licence(raw: str) -> dict:
-    # Collapse all whitespace to single spaces for robust between-marker search
     blob = " " + re.sub(r"\s+", " ", raw.upper()) + " "
 
-    # Field 1 — surname (between "1." and "2.")
-    raw_1 = _grab(blob, [r"1\.", r"[Il]\.", r"\b1\b\.?"], [r"2\."])
+    raw_1 = _grab(blob, [r"1\.", r"[Il]\."], [r"2\."])
     surname = clean_name(raw_1)
 
-    # Field 2 — forenames (between "2." and "3.")
     raw_2 = _grab(blob, [r"2\."], [r"3\."])
     forename = clean_name(raw_2)
 
-    # Field 3 — date of birth (first date token between "3." and "4")
     raw_3 = _grab(blob, [r"3\."], [r"4[Aa]", r"4\b", r"4\."])
     dob = first_date(raw_3)
 
-    # Field 4b — expiry (first date token between "4B" and "5.")
     raw_4b = _grab(blob, [r"4[Bb][\.\s]", r"4[Bb]\b"], [r"5\."])
     expiry = first_date(raw_4b)
 
-    # Field 5 — licence number (between "5." and "6.", "7.", or "8.")
     raw_5 = _grab(blob, [r"5\."], [r"[67]\.", r"8\."])
-    # Strip all spaces from the fragment then pull the longest alphanumeric run
     raw_5_clean = re.sub(r"\s+", "", raw_5)
     m5 = re.search(r"[A-Z0-9]{8,20}", raw_5_clean)
     licence = m5.group(0) if m5 else ""
 
-    # Fallback — scan the whole blob for a UK licence pattern
     if not licence:
-        blob_nospace = blob.replace(" ", "")
-        bare = re.search(r"[A-Z9]{5}\d{6}[A-Z9]{2}[A-Z0-9]{2,3}", blob_nospace)
+        bare = re.search(r"[A-Z9]{5}\d{6}[A-Z9]{2}[A-Z0-9]{2,3}", blob.replace(" ", ""))
         if bare:
             licence = bare.group(0)
 
-    # Field 8 — address (between "8." and "9.")
     raw_8 = _grab(blob, [r"8\."], [r"9\."])
-
-    # Fallback — find address by UK postcode proximity in the original line output
     if not raw_8:
         lines = [l.strip() for l in raw.split("\n") if l.strip()]
         pc_re = re.compile(r"\b[A-Z]{1,2}\d[A-Z\d]?\s*\d[A-Z]{2}\b", re.I)
@@ -232,11 +207,7 @@ def parse_licence(raw: str) -> dict:
 
     address_full = clean_address(raw_8)
     postcode = extract_postcode(address_full)
-    if postcode:
-        addr_clean = re.sub(re.escape(postcode), "", address_full, flags=re.I)
-        addr_clean = addr_clean.strip().strip(",").strip()
-    else:
-        addr_clean = address_full
+    addr_clean = re.sub(re.escape(postcode), "", address_full, flags=re.I).strip().strip(",").strip() if postcode else address_full
 
     return {
         "surname":  surname,
@@ -248,15 +219,12 @@ def parse_licence(raw: str) -> dict:
         "postcode": postcode,
     }
 
-
 # ─────────────────────────────────────────────
-#  PDF GENERATORS  (return bytes via BytesIO —
-#  no disk writes, works on Streamlit Cloud)
+#  PDF GENERATORS (BytesIO — no disk writes)
 # ─────────────────────────────────────────────
 
 def _src(filename):
     return os.path.join(SRC_DIR, filename)
-
 
 def generate_permission_letter(data: dict) -> bytes:
     buf = io.BytesIO()
@@ -275,17 +243,10 @@ def generate_permission_letter(data: dict) -> bytes:
     c.drawCentredString(w / 2, 550, "PERMISSION LETTER")
     c.setFont("Helvetica", 11)
     c.drawString(54, 520, "To Whom It May Concern,")
-    c.drawString(54, 490,
-        "We confirm that the below vehicle can be used for the carriage of "
-        "passengers for hire and reward by prior")
-    c.drawString(54, 475,
-        f"appointments (private hire) as specified on insurance policy: "
-        f"{data['insurance_policy']}")
-    c.drawString(54, 460,
-        "We authorise and give permission to the following individual to use "
-        "the vehicle for all private hire bookings")
-    c.drawString(54, 445,
-        "from UBER, BOLT, OLA, FREE NOW app, WHEELY and other private hire operators.")
+    c.drawString(54, 490, "We confirm that the below vehicle can be used for the carriage of passengers for hire and reward by prior")
+    c.drawString(54, 475, f"appointments (private hire) as specified on insurance policy: {data['insurance_policy']}")
+    c.drawString(54, 460, "We authorise and give permission to the following individual to use the vehicle for all private hire bookings")
+    c.drawString(54, 445, "from UBER, BOLT, OLA, FREE NOW app, WHEELY and other private hire operators.")
 
     for i, (label, val) in enumerate([
         ("Vehicle Registration", data["registration"]),
@@ -358,9 +319,8 @@ def generate_contract(data: dict) -> bytes:
     buf.seek(0)
     return buf.getvalue()
 
-
 # ─────────────────────────────────────────────
-#  STREAMLIT APP
+#  STREAMLIT UI
 # ─────────────────────────────────────────────
 
 st.set_page_config(page_title="FA-IBI Workspace", layout="centered")
@@ -394,14 +354,14 @@ if not st.session_state.authenticated:
     else:
         st.stop()
 
-# ── Session-state defaults ────────────────────
+# ── Session defaults ──────────────────────────
 DEFAULTS = dict(
     ocr_name="", ocr_licence="", ocr_address="", ocr_postcode="",
     ocr_dob="", ocr_expiry="", ocr_raw="",
-    last_scan_id="",                     # prevents rerun loop
+    last_scan_id="",
     sel_reg="", sel_make="", sel_model="",
     scan_msg="", fleet_msg="",
-    perm_pdf=None, contract_pdf=None,    # stored bytes for download buttons
+    perm_pdf=None, contract_pdf=None, contract_no="",
 )
 for k, v in DEFAULTS.items():
     if k not in st.session_state:
@@ -411,9 +371,6 @@ st.title("FA-IBI Master Document Workspace")
 
 # ─────────────────────────────────────────────
 #  SHARED AUTOMATION PANEL
-#  The `last_scan_id` guard ensures OCR runs
-#  exactly once per uploaded file and does NOT
-#  loop on every rerun.
 # ─────────────────────────────────────────────
 
 def render_automation(ctx: str):
@@ -426,7 +383,6 @@ def render_automation(ctx: str):
 
     col_scan, col_fleet = st.columns(2)
 
-    # ── Licence scanner ──────────────────────
     with col_scan:
         uploaded = st.file_uploader(
             "📷 Driver's Licence Scanner",
@@ -436,33 +392,29 @@ def render_automation(ctx: str):
 
         if uploaded is not None and pytesseract is not None:
             file_id = f"{uploaded.name}_{uploaded.size}"
-
-            # Only run OCR if this is a NEW file (not a rerun of the same file)
             if st.session_state.last_scan_id != file_id:
                 with st.spinner("Scanning licence…"):
                     try:
                         raw = run_ocr(uploaded)
                         st.session_state.ocr_raw = raw
                         parsed = parse_licence(raw)
-
                         st.session_state.ocr_name     = f"{parsed['forename']} {parsed['surname']}".strip()
                         st.session_state.ocr_licence  = parsed["licence"]
                         st.session_state.ocr_address  = parsed["address"]
                         st.session_state.ocr_postcode = parsed["postcode"]
                         st.session_state.ocr_dob      = parsed["dob"]
                         st.session_state.ocr_expiry   = parsed["expiry"]
-                        st.session_state.scan_msg     = "✅ Licence scanned — fields populated below!"
+                        st.session_state.scan_msg     = "✅ Licence scanned — fields populated!"
                         st.session_state.last_scan_id = file_id
                     except Exception as e:
-                        st.session_state.scan_msg = f"⚠️ Scan error: {e}"
+                        st.session_state.scan_msg     = f"⚠️ Scan error: {e}"
                         st.session_state.last_scan_id = file_id
-                st.rerun()   # single controlled rerun to refresh form values
+                st.rerun()
 
         if st.session_state.ocr_raw:
-            with st.expander("🔍 Raw OCR text (debug)"):
+            with st.expander("🔍 Raw OCR (debug)"):
                 st.text(st.session_state.ocr_raw)
 
-    # ── Fleet selector ───────────────────────
     with col_fleet:
         options = ["-- Manual Entry --"] + [
             f"{v['reg']} ({v['model']})" for v in FLEET_VEHICLES
@@ -496,7 +448,6 @@ def render_automation(ctx: str):
                 st.session_state.fleet_msg = ""
                 st.rerun()
 
-
 # ─────────────────────────────────────────────
 #  TABS
 # ─────────────────────────────────────────────
@@ -514,11 +465,9 @@ with tab1:
         with c1:
             p_date      = st.date_input("Document Date", datetime.now(), format="DD/MM/YYYY")
             p_insurance = st.text_input("Insurance Policy No", "HAVFL-000211")
-            p_reg       = st.text_input("Vehicle Registration",
-                                        value=st.session_state.sel_reg)
-            p_model     = st.text_input(
-                "Make & Model",
-                value=f"{st.session_state.sel_make} {st.session_state.sel_model}".strip())
+            p_reg       = st.text_input("Vehicle Registration", value=st.session_state.sel_reg)
+            p_model     = st.text_input("Make & Model",
+                            value=f"{st.session_state.sel_make} {st.session_state.sel_model}".strip())
         with c2:
             p_name    = st.text_input("Driver Full Name",   value=st.session_state.ocr_name)
             p_licence = st.text_input("Driving Licence No", value=st.session_state.ocr_licence)
@@ -530,7 +479,7 @@ with tab1:
 
     if go_p:
         try:
-            payload = {
+            st.session_state.perm_pdf = generate_permission_letter({
                 "date":             p_date.strftime("%d/%m/%Y"),
                 "insurance_policy": p_insurance,
                 "registration":     format_uk_reg(p_reg),
@@ -540,12 +489,10 @@ with tab1:
                 "license_no":       p_licence.upper(),
                 "start_date":       p_start.strftime("%d/%m/%Y"),
                 "end_date":         p_end.strftime("%d/%m/%Y"),
-            }
-            st.session_state.perm_pdf = generate_permission_letter(payload)
+            })
         except Exception as e:
-            st.error(f"PDF generation failed: {e}")
+            st.error(f"PDF error: {e}")
 
-    # Download button persists after rerun
     if st.session_state.perm_pdf:
         st.download_button(
             "📥 Download Permission Letter PDF",
@@ -582,9 +529,9 @@ with tab2:
         st.markdown("---")
         st.subheader("Payment Parameters")
         pp1, pp2, pp3 = st.columns(3)
-        with pp1: c_rent    = st.text_input("Rent (£/week)",  "250/-")
-        with pp2: c_rate    = st.text_input("Excess Charge",  "20/-")
-        with pp3: c_deposit = st.text_input("Deposit (£)",    "500/-")
+        with pp1: c_rent    = st.text_input("Rent (£/week)", "250/-")
+        with pp2: c_rate    = st.text_input("Excess Charge", "20/-")
+        with pp3: c_deposit = st.text_input("Deposit (£)",   "500/-")
 
         st.markdown("---")
         st.subheader("Hire Period")
@@ -627,15 +574,13 @@ with tab2:
             st.session_state.contract_pdf = generate_contract(cpay)
             st.session_state.contract_no  = cpay["contract_no"]
         except Exception as e:
-            st.error(f"PDF generation failed: {e}")
+            st.error(f"PDF error: {e}")
 
-    # Download button persists after rerun
     if st.session_state.contract_pdf:
-        fname = f"FA_IBI_Contract_{st.session_state.get('contract_no','')}.pdf"
         st.download_button(
             "📥 Download Contract PDF",
             data=st.session_state.contract_pdf,
-            file_name=fname,
+            file_name=f"FA_IBI_Contract_{st.session_state.contract_no}.pdf",
             mime="application/pdf",
             key="dl_contract",
         )
