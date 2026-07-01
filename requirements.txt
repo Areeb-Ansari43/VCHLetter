@@ -1,6 +1,6 @@
 streamlit
 reportlab
 pytesseract
+opencv-python-headless
 pillow
 numpy
-opencv-python-headless
