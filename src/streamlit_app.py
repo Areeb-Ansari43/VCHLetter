@@ -1,6 +1,5 @@
 import streamlit as st
 import os, re, io
-import streamlit.components.v1 as components
 from PIL import Image, ImageFilter, ImageOps, ImageEnhance
 from datetime import datetime, date
 from reportlab.lib.pagesizes import letter
@@ -41,39 +40,37 @@ header {visibility: hidden;}
 """, unsafe_allow_html=True)
 
 # ─────────────────────────────────────────────
-#  PERSISTENCE & CLEAN URL ROUTING ENGINE
+#  SILENT BROWSER STORAGE BACKGROUND BRIDGE
 # ─────────────────────────────────────────────
-if "authenticated" not in st.session_state:
-    st.session_state.authenticated = False
-
-query_params = st.query_params
-if "auth_token" in query_params:
-    if query_params["auth_token"] == "verified":
-        st.session_state.authenticated = True
-    st.query_params.clear()
-
-# Native Client-Side Sync Driver (Fires Instantly Before Portal Logic Engine)
-components.html("""
+# Automatically scrubs messy query parameters out of the address bar safely
+st.html("""
     <script>
-    // Force immediate parent URL parameter scrubbing
     if (window.parent.location.search.length > 0) {
         const cleanUrl = window.parent.location.protocol + "//" + window.parent.location.host + window.parent.location.pathname;
         window.parent.history.replaceState({}, document.title, cleanUrl);
     }
-    
-    // Read secure long-term browser memory token
+    </script>
+""")
+
+# Create an invisible background communication element
+if "authenticated" not in st.session_state:
+    st.session_state.authenticated = False
+
+# This invisible component reads localStorage and informs Python instantly without loops
+js_session_check = st.components.v1.html("""
+    <script>
     const isVerified = localStorage.getItem("fa_ibi_auth");
-    const isTabActive = sessionStorage.getItem("tab_session");
-    
-    // Auto-login driver pass for manual refreshes
-    if (isVerified === "true" && !isTabActive) {
-        sessionStorage.setItem("tab_session", "active");
-        const currentUrl = new URL(window.parent.location.href);
-        currentUrl.searchParams.set("auth_token", "verified");
-        window.parent.location.href = currentUrl.toString();
+    if (isVerified === "true") {
+        window.parent.document.querySelector("input[aria-label='hidden_auth_trigger']").value = "AUTO_LOGIN";
+        window.parent.document.querySelector("input[aria-label='hidden_auth_trigger']").dispatchEvent(new Event('change', { bubbles: true }));
     }
     </script>
 """, height=0, width=0)
+
+# The invisible text target input field mapped to background script signals
+hidden_trigger = st.text_input("hidden_auth_trigger", label_visibility="collapsed", value="")
+if hidden_trigger == "AUTO_LOGIN":
+    st.session_state.authenticated = True
 
 FLEET_VEHICLES = [
     {"reg": "AF70 MYK", "model": "TESLA MODEL 3"},
@@ -134,7 +131,7 @@ FLEET_VEHICLES = [
     {"reg": "LT69 GSV", "model": "TOYOTA COROLLA"},
     {"reg": "LT69 GSZ", "model": "TOYOTA COROLLA"},
     {"reg": "LT69 GTU", "model": "TOYOTA COROLLA"},
-    {"reg": "MD25 AYY", "off": "FORD TOURNEO CUSTOM"},
+    {"reg": "MD25 AYY", "model": "FORD TOURNEO CUSTOM"},
     {"reg": "MD25 DCX", "model": "FORD TOURNEO CUSTOM"},
     {"reg": "MJ69 YPN", "model": "TESLA MODEL 3"},
     {"reg": "MV68 OGF", "model": "MERCEDES-BENZ E220D"},
@@ -286,7 +283,6 @@ def generate_permission_letter(data: dict) -> bytes:
     c.drawString(54, 436, "We authorise and give permission to the following individual to use the vehicle for all private hire bookings")
     c.drawString(54, 420, "from UBER, BOLT, OLA, FREE NOW app, WHEELY and other private hire operators.")
     
-    # Restored absolute blueprint constraints coordinates layout
     c.drawString(54, 385, "Vehicle Registration :")
     c.drawString(180, 385, data["registration"])
     
@@ -370,14 +366,6 @@ if not st.session_state.authenticated:
     if st.button("Verify Key"):
         if code == st.secrets.get("ACCESS_KEY", ""):
             st.session_state.authenticated = True
-            components.html("""
-                <script>
-                sessionStorage.setItem("tab_session", "active");
-                const currentUrl = new URL(window.parent.location.href);
-                currentUrl.searchParams.set("auth_token", "verified");
-                window.parent.location.href = currentUrl.toString();
-                </script>
-            """, height=0, width=0)
             st.rerun()
         else:
             st.error("Invalid Security Verification Pin Code")
@@ -386,7 +374,7 @@ if not st.session_state.authenticated:
 # ─────────────────────────────────────────────
 #  TOP-RIGHT CLEAN COOKIE CONSENT MODAL
 # ─────────────────────────────────────────────
-components.html("""
+st.components.v1.html("""
     <script>
     if (localStorage.getItem("cookie_consent") !== "accepted") {
         const panel = window.parent.document.createElement("div");
@@ -419,12 +407,6 @@ components.html("""
             localStorage.setItem("cookie_consent", "accepted");
             localStorage.setItem("fa_ibi_auth", "true");
             panel.remove();
-            
-            // Clean un-interrupted native redirect thread invocation to save cookie index state safely
-            sessionStorage.setItem("tab_session", "active");
-            const currentUrl = new URL(window.parent.location.href);
-            currentUrl.searchParams.set("auth_token", "verified");
-            window.parent.location.href = currentUrl.toString();
         };
     }
     </script>
