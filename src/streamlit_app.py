@@ -134,7 +134,6 @@ def strip_address_noise(s: str) -> str:
     s = re.sub(r"UNITED\s+\w*\s*KINGDOM", "", s)
     s = re.sub(r"\b(ENGLAND|SCOTLAND|WALES|NORTHERN\s+IRELAND)\b", "", s)
     s = re.sub(r"\bDVLA\b|\bDVLNI\b", "", s)
-    # Remove dynamic strings of stray OCR characters/reference dates
     s = re.sub(r"\b\d{1,2}\s+\d{1,2}\s+\d{2,4}\b", " ", s)
     s = re.sub(r"\b\d{5,}\b", " ", s)
     s = re.sub(r"\b[1-9][ABCDE58]?\.?\s*", " ", s) 
@@ -186,33 +185,28 @@ def run_ocr(uploaded_file) -> str:
 def parse_licence(raw: str) -> dict:
     blob = " " + re.sub(r"\s+", " ", raw.upper()) + " "
 
-    # 1. Surname
     surname = clean_name(_grab(blob, [r"1\."], [r"2\."]))
     if not surname:
         m = re.search(r"1\.\s*([A-Z\-]+)", blob)
         if m: surname = m.group(1).strip()
 
-    # 2. Forename
     forename = clean_name(_grab(blob, [r"2\."], [r"3\."]))
     if not forename:
         m = re.search(r"2\.\s*([A-Z\-]+)", blob)
         if m: forename = m.group(1).strip()
 
-    # 3. DOB
     raw_3 = _grab(blob, [r"3\."], [r"4[Aa]\b"])
     dob = first_date(raw_3)
     if not dob:
         m = re.search(r"3\.\s*(\d{1,2}[./\-]\d{1,2}[./\-]\d{2,4})", blob)
         if m: dob = normalize_date(m.group(1))
 
-    # 4b. Date of Expiry
     raw_4b = _grab(blob, [r"4[Bb]\.?"], [r"4[Cc]", r"5\."])
     expiry = first_date(raw_4b)
     if not expiry:
         m = re.search(r"4[Bb]\.?\s*(\d{1,2}[./\-]\d{1,2}[./\-]\d{2,4})", blob)
         if m: expiry = normalize_date(m.group(1))
 
-    # 5. Licence Number
     licence = ""
     clean_strip = re.sub(r"\s", "", blob)
     lic_match = re.search(r"5\.?([A-Z9]{5}\d{6}[A-Z9]{2}[A-Z0-9]{3,5})", clean_strip)
@@ -222,7 +216,6 @@ def parse_licence(raw: str) -> dict:
         m = re.search(r"5\.\s*([A-Z0-9\-]{5,20})", blob)
         if m: licence = re.sub(r"[^A-Z0-9]", "", m.group(1))
 
-    # 8. Address Separation Logic
     raw_8 = _grab(blob, [r"8\."], [r"9\."])
     if not raw_8:
         m = re.search(r"8\.\s*(.*?)(?=\s*9\.)", blob, re.DOTALL)
@@ -231,7 +224,6 @@ def parse_licence(raw: str) -> dict:
     address_block = raw_8 if raw_8 else blob
     postcode = extract_postcode(address_block)
     
-    # Clean licence number string values completely out of the address payload block
     if licence:
         spaced_licence = " ".join(list(licence))
         address_block = address_block.replace(licence, "")
@@ -241,7 +233,6 @@ def parse_licence(raw: str) -> dict:
     if postcode:
         addr_clean = re.sub(re.escape(postcode), "", addr_clean, flags=re.I)
     
-    # Strip any numeric fragments or broken row elements that pollute layout blocks
     addr_clean = re.sub(r"^[0-9A-Z]{1,2}\b\.?\s*", "", addr_clean.strip()).strip(", ").strip()
     addr_clean = re.sub(r"^\d{2,}\s+", "", addr_clean).strip()
 
@@ -310,7 +301,6 @@ def generate_contract(data: dict) -> bytes:
     # ──── PAGE 1 ────
     if bg1: cv.drawImage(bg1, 0, 0, width=W, height=H)
     
-    # Font constrained strictly to 8.8 across dataset values
     cv.setFont("Helvetica-Bold", 8.8)
     cv.drawString(395, 714, data.get("contract_no", ""))
     cv.drawString(530, 714, data.get("date", ""))
@@ -354,7 +344,17 @@ def generate_contract(data: dict) -> bytes:
 #  STREAMLIT UI ENGINE
 # ─────────────────────────────────────────────
 st.set_page_config(page_title="FA-IBI Workspace", layout="centered")
-st.markdown("<style>#MainMenu,footer,header,[data-testid='stToolbar']{display:none!important;}</style>", unsafe_allow_html=True)
+
+# CSS to clean remove standard Streamlit branding, main menus, and footers
+hide_st_style = """
+<style>
+#MainMenu {visibility: hidden;}
+footer {visibility: hidden;}
+header {visibility: hidden;}
+[data-testid="stToolbar"] {visibility: hidden !important;}
+</style>
+"""
+st.markdown(hide_st_style, unsafe_allow_html=True)
 
 if "authenticated" not in st.session_state: st.session_state.authenticated = False
 if st.query_params.get("session") == "active": st.session_state.authenticated = True
@@ -365,7 +365,6 @@ if not st.session_state.authenticated:
         st.query_params["session"] = "active"; st.rerun()
     else: st.stop()
 
-# State variables registration map
 for k, v in dict(
     ocr_name="", ocr_licence="", ocr_address="", ocr_postcode="",
     ocr_dob="", ocr_expiry="", last_scan_id="",
@@ -437,7 +436,6 @@ if st.session_state.pending_contract:
     finally:
         st.session_state.pending_contract = None
 
-# Tab initialization logic
 tab1, tab2 = st.tabs(["📝 Permission Letter", "📜 Contract Generator"])
 
 with tab1:
