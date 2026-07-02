@@ -5,6 +5,7 @@ from datetime import datetime, date
 from reportlab.lib.pagesizes import letter
 from reportlab.lib.utils import simpleSplit
 from reportlab.pdfgen import canvas
+from streamlit_cookies_manager import EncryptedCookiesManager
 
 try:
     import pytesseract
@@ -12,6 +13,47 @@ except ImportError:
     pytesseract = None
 
 SRC_DIR = os.path.dirname(os.path.abspath(__file__))
+
+# Find Favicon Image dynamically
+def _find_img(base_name):
+    for ext in [".jpg", ".png", ".jpeg", ".JPG", ".PNG"]:
+        p = os.path.join(SRC_DIR, base_name + ext)
+        if os.path.exists(p): return p
+    return None
+
+fav_path = _find_img("Screenshot 2026-06-09 230035") or "🚗"
+
+# ─────────────────────────────────────────────
+#  STREAMLIT CONFIGURATION & BRAND HIDING
+# ─────────────────────────────────────────────
+st.set_page_config(
+    page_title="FA-IBI Workspace",
+    page_icon=fav_path,
+    layout="centered"
+)
+
+hide_st_style = """
+<style>
+#MainMenu {visibility: hidden;}
+footer {visibility: hidden;}
+header {visibility: hidden;}
+[data-testid="stToolbar"] {visibility: hidden !important;}
+</style>
+"""
+st.markdown(hide_st_style, unsafe_allow_html=True)
+
+# ─────────────────────────────────────────────
+#  COOKIE MANAGEMENT SYSTEM
+# ─────────────────────────────────────────────
+# Initialize the secure browser cookie storage driver
+# Change the password to any secure 16+ char random string of your choosing
+cookies = EncryptedCookiesManager(
+    prefix="fa_ibi/auth/",
+    password=st.secrets.get("COOKIE_PASSWORD", "SuperSecretSecurePassword321!")
+)
+
+if not cookies.ready():
+    st.stop()  # Wait until the browser completes the asynchronous cookie handshake
 
 FLEET_VEHICLES = [
     {"reg": "AF70 MYK", "model": "TESLA MODEL 3"},
@@ -246,12 +288,6 @@ def parse_licence(raw: str) -> dict:
 # ─────────────────────────────────────────────
 #  PDF GENERATION ENGINE
 # ─────────────────────────────────────────────
-def _find_img(base_name):
-    for ext in [".jpg", ".png", ".jpeg", ".JPG", ".PNG"]:
-        p = os.path.join(SRC_DIR, base_name + ext)
-        if os.path.exists(p): return p
-    return None
-
 def generate_permission_letter(data: dict) -> bytes:
     buf = io.BytesIO()
     c = canvas.Canvas(buf, pagesize=letter, pageCompression=1)
@@ -341,41 +377,36 @@ def generate_contract(data: dict) -> bytes:
     cv.save(); buf.seek(0); return buf.getvalue()
 
 # ─────────────────────────────────────────────
-#  STREAMLIT UI ENGINE
+#  AUTHENTICATION CORE (SECURE BROWSER COOKIES)
 # ─────────────────────────────────────────────
-st.set_page_config(page_title="FA-IBI Workspace", layout="centered")
+is_authenticated = cookies.get("session_verified") == "true"
 
-# CSS to clean remove standard Streamlit branding, main menus, and footers
-hide_st_style = """
-<style>
-#MainMenu {visibility: hidden;}
-footer {visibility: hidden;}
-header {visibility: hidden;}
-[data-testid="stToolbar"] {visibility: hidden !important;}
-</style>
-"""
-st.markdown(hide_st_style, unsafe_allow_html=True)
+if not is_authenticated:
+    # Render minimalist auth lock layout without address parameters exposed
+    st.subheader("🔐 System Security Verification")
+    code = st.text_input("Access PIN", type="password", placeholder="Enter key…")
+    if st.button("Verify Key"):
+        if code == st.secrets.get("ACCESS_KEY", ""):
+            cookies["session_verified"] = "true"
+            cookies.save()  # Save encrypted browser cookie state
+            st.rerun()
+        else:
+            st.error("Invalid Security Verification Pin Code")
+    st.stop()
 
-if "authenticated" not in st.session_state: st.session_state.authenticated = False
-if st.query_params.get("session") == "active": st.session_state.authenticated = True
-if not st.session_state.authenticated:
-    code = st.text_input("System Access", type="password", placeholder="Enter key…")
-    if code == st.secrets.get("ACCESS_KEY", ""):
-        st.session_state.authenticated = True
-        st.query_params["session"] = "active"; st.rerun()
-    else: st.stop()
-
+# ─────────────────────────────────────────────
+#  APPLICATION CORE WORKSPACE
+# ─────────────────────────────────────────────
+# Initialize core system states safely
 for k, v in dict(
     ocr_name="", ocr_licence="", ocr_address="", ocr_postcode="",
     ocr_dob="", ocr_expiry="", last_scan_id="",
     sel_reg="", sel_make="", sel_model="",
     scan_msg="", fleet_msg="",
     perm_pdf=None, contract_pdf=None, contract_no="",
-    pending_contract=None, current_tab=0
+    pending_contract=None
 ).items():
     if k not in st.session_state: st.session_state[k] = v
-
-st.title("FA-IBI Master Document Workspace")
 
 # SHARED AUTOMATION CONTROL PANEL
 st.markdown("### 🎛️ Shared Data Automation Panel")
