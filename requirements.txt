@@ -1,6 +1,7 @@
 streamlit
+Pillow
 reportlab
 pytesseract
-Pillow
+opencv-python-headless
 numpy
-streamlit-cookies-manager
+extra-streamlit-components
