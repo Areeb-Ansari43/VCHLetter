@@ -52,16 +52,20 @@ if "auth_token" in query_params:
         st.session_state.authenticated = True
     st.query_params.clear()
 
+# Native Client-Side Sync Driver (Fires Instantly Before Portal Logic Engine)
 components.html("""
     <script>
+    // Force immediate parent URL parameter scrubbing
     if (window.parent.location.search.length > 0) {
         const cleanUrl = window.parent.location.protocol + "//" + window.parent.location.host + window.parent.location.pathname;
         window.parent.history.replaceState({}, document.title, cleanUrl);
     }
     
+    // Read secure long-term browser memory token
     const isVerified = localStorage.getItem("fa_ibi_auth");
     const isTabActive = sessionStorage.getItem("tab_session");
     
+    // Auto-login driver pass for manual refreshes
     if (isVerified === "true" && !isTabActive) {
         sessionStorage.setItem("tab_session", "active");
         const currentUrl = new URL(window.parent.location.href);
@@ -130,7 +134,7 @@ FLEET_VEHICLES = [
     {"reg": "LT69 GSV", "model": "TOYOTA COROLLA"},
     {"reg": "LT69 GSZ", "model": "TOYOTA COROLLA"},
     {"reg": "LT69 GTU", "model": "TOYOTA COROLLA"},
-    {"reg": "MD25 AYY", "model": "FORD TOURNEO CUSTOM"},
+    {"reg": "MD25 AYY", "off": "FORD TOURNEO CUSTOM"},
     {"reg": "MD25 DCX", "model": "FORD TOURNEO CUSTOM"},
     {"reg": "MJ69 YPN", "model": "TESLA MODEL 3"},
     {"reg": "MV68 OGF", "model": "MERCEDES-BENZ E220D"},
@@ -270,12 +274,11 @@ def generate_permission_letter(data: dict) -> bytes:
     c.drawCentredString(pw / 2, 550, "PERMISSION LETTER")
     
     c.setFont("Helvetica", 11)
-    c.drawString(54, 520, "To Whom It May Concern,")
+    c.drawString(54, 514, "To Whom It May Concern,")
     
-    # 24pt clean block padding cushion separation height line gaps 
     body_text = f"We confirm that the below vehicle can be used for the carriage of passengers for hire and reward by prior appointments (private hire) as specified on insurance policy: {data['insurance_policy']}"
     lines = simpleSplit(body_text, "Helvetica", 11, pw - 108)
-    y_text = 482
+    y_text = 478
     for l in lines:
         c.drawString(54, y_text, l)
         y_text -= 15
@@ -283,7 +286,7 @@ def generate_permission_letter(data: dict) -> bytes:
     c.drawString(54, 436, "We authorise and give permission to the following individual to use the vehicle for all private hire bookings")
     c.drawString(54, 420, "from UBER, BOLT, OLA, FREE NOW app, WHEELY and other private hire operators.")
     
-    # Absolute Grid Engine Blueprint alignment coordinates mapping
+    # Restored absolute blueprint constraints coordinates layout
     c.drawString(54, 385, "Vehicle Registration :")
     c.drawString(180, 385, data["registration"])
     
@@ -416,6 +419,12 @@ components.html("""
             localStorage.setItem("cookie_consent", "accepted");
             localStorage.setItem("fa_ibi_auth", "true");
             panel.remove();
+            
+            // Clean un-interrupted native redirect thread invocation to save cookie index state safely
+            sessionStorage.setItem("tab_session", "active");
+            const currentUrl = new URL(window.parent.location.href);
+            currentUrl.searchParams.set("auth_token", "verified");
+            window.parent.location.href = currentUrl.toString();
         };
     }
     </script>
