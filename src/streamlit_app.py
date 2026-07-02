@@ -52,18 +52,21 @@ if "auth_token" in query_params:
         st.session_state.authenticated = True
     st.query_params.clear()
 
-# Global Client-Side Storage Verification Bridge
+# Native Client-Side Sync Driver (Fires Instantly Before Portal Logic Engine)
 components.html("""
     <script>
+    // Force immediate parent URL parameter scrubbing
     if (window.parent.location.search.length > 0) {
         const cleanUrl = window.parent.location.protocol + "//" + window.parent.location.host + window.parent.location.pathname;
         window.parent.history.replaceState({}, document.title, cleanUrl);
     }
     
-    const verified = localStorage.getItem("fa_ibi_auth");
-    const sessionActive = sessionStorage.getItem("tab_session");
+    // Read secure long-term browser memory token
+    const isVerified = localStorage.getItem("fa_ibi_auth");
+    const isTabActive = sessionStorage.getItem("tab_session");
     
-    if (verified === "true" && !sessionActive) {
+    // Auto-login driver pass for manual refreshes
+    if (isVerified === "true" && !isTabActive) {
         sessionStorage.setItem("tab_session", "active");
         const currentUrl = new URL(window.parent.location.href);
         currentUrl.searchParams.set("auth_token", "verified");
@@ -316,7 +319,7 @@ def generate_contract(data: dict) -> bytes:
     cv.save(); buf.seek(0); return buf.getvalue()
 
 # ─────────────────────────────────────────────
-#  SECURITY LOCK Portal
+#  GATEKEEPER SECURITY PORTAL
 # ─────────────────────────────────────────────
 if not st.session_state.authenticated:
     st.subheader("🔐 System Security Verification")
@@ -338,39 +341,41 @@ if not st.session_state.authenticated:
     st.stop()
 
 # ─────────────────────────────────────────────
-#  POST-AUTHENTICATION CLEAN COOKIE MODAL
+#  TOP-RIGHT CLEAN COOKIE CONSENT MODAL
 # ─────────────────────────────────────────────
-# This now triggers cleanly ONLY after a successful passcode login verification pass
 components.html("""
     <script>
     if (localStorage.getItem("cookie_consent") !== "accepted") {
-        const modal = window.parent.document.createElement("div");
-        modal.id = "cleanCookieModal";
-        modal.style.position = "fixed";
-        modal.style.top = "24px";
-        modal.style.left = "24px";
-        modal.style.width = "320px";
-        modal.style.backgroundColor = "#18181c";
-        modal.style.color = "#ffffff";
-        modal.style.padding = "16px";
-        modal.style.borderRadius = "8px";
-        modal.style.boxShadow = "0px 6px 20px rgba(0,0,0,0.4)";
-        modal.style.fontFamily = "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif";
-        modal.style.zIndex = "999999";
-        modal.style.border = "1px solid #2d2d34";
+        const panel = window.parent.document.createElement("div");
+        panel.id = "cleanTopRightCookieModal";
+        panel.style.position = "fixed";
+        panel.style.top = "24px";
+        panel.style.right = "24px";
+        panel.style.width = "320px";
+        panel.style.backgroundColor = "#18181c";
+        panel.style.color = "#ffffff";
+        panel.style.padding = "18px";
+        panel.style.borderRadius = "8px";
+        panel.style.boxShadow = "0px 10px 30px rgba(0,0,0,0.5)";
+        panel.style.fontFamily = "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif";
+        panel.style.zIndex = "999999";
+        panel.style.border = "1px solid #2d2d34";
         
-        modal.innerHTML = `
-            <h4 style="margin:0 0 6px 0;font-size:14px;font-weight:600;letter-spacing:-0.2px;">🍪 Cookie Session Cache</h4>
-            <p style="margin:0 0 12px 0;font-size:12px;color:#9ca3af;line-height:1.4;">Remember access privileges dynamically across manual window refreshes?</p>
-            <button id="acceptCookieBtn" style="background:#238636;color:#fff;border:none;padding:6px 12px;border-radius:4px;font-size:12px;font-weight:500;cursor:pointer;width:100%;transition:background 0.2s;">Accept & Remember Session</button>
+        panel.innerHTML = `
+            <div style="display:flex; align-items:center; margin-bottom:6px;">
+                <span style="font-size:16px; margin-right:8px;">🍪</span>
+                <h4 style="margin:0; font-size:14px; font-weight:600; letter-spacing:-0.2px;">Cookie Session Cache</h4>
+            </div>
+            <p style="margin:0 0 14px 0; font-size:12px; color:#9ca3af; line-height:1.45;">Remember active security clearance privileges dynamically across manual browser refreshes?</p>
+            <button id="acceptCookieBtn" style="background:#238636; color:#fff; border:none; padding:8px 12px; border-radius:4px; font-size:12px; font-weight:500; cursor:pointer; width:100%; transition:background 0.2s;">Accept & Remember Session</button>
         `;
         
-        window.parent.document.body.appendChild(modal);
+        window.parent.document.body.appendChild(panel);
         
         window.parent.document.getElementById("acceptCookieBtn").onclick = function() {
             localStorage.setItem("cookie_consent", "accepted");
             localStorage.setItem("fa_ibi_auth", "true");
-            modal.remove();
+            panel.remove();
         };
     }
     </script>
