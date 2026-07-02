@@ -282,7 +282,6 @@ def generate_permission_letter(data: dict) -> bytes:
     c.drawString(54, y_text - 10, "We authorise and give permission to the following individual to use the vehicle for all private hire bookings")
     c.drawString(54, y_text - 25, "from UBER, BOLT, OLA, FREE NOW app, WHEELY and other private hire operators.")
     
-    # Restored metrics layout mapping 
     labels_vals = [
         ("Vehicle Registration", data["registration"]),
         ("Make and Model",       data["make_model"]),
@@ -313,7 +312,10 @@ def generate_permission_letter(data: dict) -> bytes:
     
     c.drawString(54, y_field - 60, "Regards,")
     if sig: c.drawImage(sig, 40, y_field - 165, width=280, height=115, mask="auto")
-    return c.getbytes()
+    
+    c.save()
+    buf.seek(0)
+    return buf.getvalue()
 
 def generate_contract(data: dict) -> bytes:
     buf = io.BytesIO()
