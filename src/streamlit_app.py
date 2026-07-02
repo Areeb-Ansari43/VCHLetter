@@ -40,37 +40,36 @@ header {visibility: hidden;}
 """, unsafe_allow_html=True)
 
 # ─────────────────────────────────────────────
-#  SILENT BROWSER STORAGE BACKGROUND BRIDGE
+#  PERSISTENCE & CLEAN URL ROUTING ENGINE
 # ─────────────────────────────────────────────
-# Automatically scrubs messy query parameters out of the address bar safely
+if "authenticated" not in st.session_state:
+    st.session_state.authenticated = False
+
+query_params = st.query_params
+if "auth_token" in query_params:
+    if query_params["auth_token"] == "verified":
+        st.session_state.authenticated = True
+    st.query_params.clear()
+
+# Pure JavaScript Sync Pipeline - Handles URL cleanup and automatic logins seamlessly
 st.html("""
     <script>
+    // Force immediate URL parameter cleaning
     if (window.parent.location.search.length > 0) {
         const cleanUrl = window.parent.location.protocol + "//" + window.parent.location.host + window.parent.location.pathname;
         window.parent.history.replaceState({}, document.title, cleanUrl);
     }
-    </script>
-""")
-
-# Create an invisible background communication element
-if "authenticated" not in st.session_state:
-    st.session_state.authenticated = False
-
-# This invisible component reads localStorage and informs Python instantly without loops
-js_session_check = st.components.v1.html("""
-    <script>
+    
+    // Check local storage for persistent validation signature
     const isVerified = localStorage.getItem("fa_ibi_auth");
-    if (isVerified === "true") {
-        window.parent.document.querySelector("input[aria-label='hidden_auth_trigger']").value = "AUTO_LOGIN";
-        window.parent.document.querySelector("input[aria-label='hidden_auth_trigger']").dispatchEvent(new Event('change', { bubbles: true }));
+    if (isVerified === "true" && !window.parent.__st_auto_logged) {
+        window.parent.__st_auto_logged = true;
+        const currentUrl = new URL(window.parent.location.href);
+        currentUrl.searchParams.set("auth_token", "verified");
+        window.parent.location.href = currentUrl.toString();
     }
     </script>
-""", height=0, width=0)
-
-# The invisible text target input field mapped to background script signals
-hidden_trigger = st.text_input("hidden_auth_trigger", label_visibility="collapsed", value="")
-if hidden_trigger == "AUTO_LOGIN":
-    st.session_state.authenticated = True
+""")
 
 FLEET_VEHICLES = [
     {"reg": "AF70 MYK", "model": "TESLA MODEL 3"},
@@ -366,7 +365,16 @@ if not st.session_state.authenticated:
     if st.button("Verify Key"):
         if code == st.secrets.get("ACCESS_KEY", ""):
             st.session_state.authenticated = True
-            st.rerun()
+            
+            # Commit active credentials directly to the browser memory stack on authorization pass
+            st.components.v1.html("""
+                <script>
+                localStorage.setItem("fa_ibi_auth", "true");
+                const currentUrl = new URL(window.parent.location.href);
+                currentUrl.searchParams.set("auth_token", "verified");
+                window.parent.location.href = currentUrl.toString();
+                </script>
+            """, height=0, width=0)
         else:
             st.error("Invalid Security Verification Pin Code")
     st.stop()
