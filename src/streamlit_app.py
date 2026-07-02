@@ -106,7 +106,7 @@ FLEET_VEHICLES = [
 ]
 
 # ─────────────────────────────────────────────
-#  HELPERS
+#  HELPERS & PARSERS
 # ─────────────────────────────────────────────
 def format_uk_reg(text):
     clean = re.sub(r"[^A-Za-z0-9]", "", text).upper()
@@ -136,7 +136,6 @@ def strip_address_noise(s: str) -> str:
     s = re.sub(r"\bDVLA\b|\bDVLNI\b", "", s)
     s = re.sub(r"\b[3-8][ABC58]?\.?\s*", " ", s) 
     s = re.sub(r"\b(19|20)\d{2}\b", " ", s)
-    s = re.sub(r"\d{1,2}[./\-]\d{1,2}[./\-]\d{2,4}", " ", s)
     s = re.sub(r"[A-Z]{5}\d{6}[A-Z0-9]{4,8}", " ", s)
     s = re.sub(r"[^A-Z0-9 ,'\-]", " ", s)
     s = re.sub(r"\s+", " ", s).strip().strip(",").strip()
@@ -155,13 +154,8 @@ def _grab(blob, start_pats, end_pats):
                 return m.group(1).strip()
     return ""
 
-def validate_uk_licence(candidate: str) -> str:
-    c = re.sub(r"\s", "", candidate.upper())
-    m = re.search(r"\b([A-Z9]{5}\d{6}[A-Z9]{2}[A-Z0-9]{2,5})\b", c)
-    return m.group(1) if m else ""
-
 # ─────────────────────────────────────────────
-#  OCR ENGINE 
+#  OCR SCANNER 
 # ─────────────────────────────────────────────
 def run_ocr(uploaded_file) -> str:
     img = Image.open(uploaded_file).convert("RGB")
@@ -187,65 +181,53 @@ def run_ocr(uploaded_file) -> str:
         v = wb * wf * (mb - mf) ** 2
         if v > bv: bv = v; thresh = i
     img = img.point(lambda p: 255 if p > thresh else 0)
-    return pytesseract.image_to_string(img, config=r"--oem 3 --psm 6")
-
-STREET_TYPES = ["ROAD","STREET","AVENUE","LANE","DRIVE","CLOSE","WAY","GARDENS",
-                "CRESCENT","PLACE","COURT","GROVE","TERRACE","WALK","SQUARE","HILL",
-                "VALE","VIEW","RISE","MEWS","PARADE","AVENUE","BOULEVARD","CIRCUS"]
+    return pytesseract.image_to_string(img, config=r"--oem 3 --psm 4")
 
 def parse_licence(raw: str) -> dict:
     blob = " " + re.sub(r"\s+", " ", raw.upper()) + " "
 
-    # Surname
-    surname = clean_name(_grab(blob, [r"1\.", r"[Il]\."], [r"2\."]))
+    # Surname (1.)
+    surname = clean_name(_grab(blob, [r"1\."], [r"2\."]))
     if not surname:
-        m = re.search(r"\b(?:SURNAME|LAST\s+NAME)[:\s]+([A-Z][A-Z\s'\-]{1,40}?)(?=\s+(?:2\.|FIRST|GIVEN|FORENAME|3\.))", blob)
-        if m: surname = clean_name(m.group(1))
+        m = re.search(r"1\.\s*([A-Z\-]+)", blob)
+        if m: surname = m.group(1).strip()
 
-    # Forename
-    raw_2 = _grab(blob, [r"2\."], [r"3\."])
-    raw_2 = re.sub(r"\b\d[A-Ca-c]?\.?\s*", " ", raw_2)
-    forename = clean_name(raw_2)
+    # Forename (2.)
+    forename = clean_name(_grab(blob, [r"2\."], [r"3\."]))
+    if not forename:
+        m = re.search(r"2\.\s*([A-Z\-]+)", blob)
+        if m: forename = m.group(1).strip()
 
-    # DOB
-    raw_3 = _grab(blob, [r"3\."], [r"4[Aa]\.?", r"4\b"])
+    # DOB (3.)
+    raw_3 = _grab(blob, [r"3\."], [r"4[Aa]\b"])
     dob = first_date(raw_3)
     if not dob:
-        m = re.search(r"(?:D\.?O\.?B|DATE\s+OF\s+BIRTH|BIRTH)[:\s]+(\d{1,2}[./\-]\d{1,2}[./\-]\d{2,4})", blob)
+        m = re.search(r"3\.\s*(\d{1,2}[./\-]\d{1,2}[./\-]\d{2,4})", blob)
         if m: dob = normalize_date(m.group(1))
 
-    # Expiry
-    raw_4b = _grab(blob, [r"4[Bb][\.\s]?", r"4[Bb]\b"], [r"5\.", r"5\b", r"7\.", r"7\b", r"8\.", r"8\b"])
+    # Expiry (4b.)
+    raw_4b = _grab(blob, [r"4[Bb]\.?"], [r"4[Cc]", r"5\."])
     expiry = first_date(raw_4b)
+    if not expiry:
+        m = re.search(r"4[Bb]\.?\s*(\d{1,2}[./\-]\d{1,2}[./\-]\d{2,4})", blob)
+        if m: expiry = normalize_date(m.group(1))
 
-    # Licence ID String Tracking
+    # Licence Number (5.)
     licence = ""
-    clean_blob_inline = blob.replace(" ", "")
-    lic_match = re.search(r"([A-Z9]{5}\d{6}[A-Z9]{2}[A-Z0-9]{3,5})", clean_blob_inline)
-    if lic_match:
-        licence = lic_match.group(1)[:16]
+    raw_5 = _grab(blob, [r"5\."], [r"6\.", r"7\."])
+    if raw_5:
+        licence = re.sub(r"\s", "", raw_5).split(".")[0]
     if not licence:
-        raw_5 = _grab(blob, [r"5\."], [r"[678]\.", r"7\b", r"8\b"])
-        licence = validate_uk_licence(raw_5)
+        m = re.search(r"5\.\s*([A-Z0-9]{5,18})", blob)
+        if m: licence = m.group(1).strip()
 
-    # Contextual Address Capture
+    # Address (8.)
     raw_8 = _grab(blob, [r"8\."], [r"9\."])
-    lines = [l.strip() for l in raw.split("\n") if l.strip()]
-    pc_re = re.compile(r"\b[A-Z]{1,2}\d[A-Z\d]?\s*\d[A-Z]{2}\b", re.I)
-
     if not raw_8:
-        for idx, line in enumerate(lines):
-            if pc_re.search(line.upper()):
-                window = lines[max(0, idx - 3): idx + 1]
-                addr_lines = []
-                for wl in window:
-                    u = wl.upper().strip()
-                    if any(x in u for x in ["1.", "2.", "3.", "4B.", "5.", "9."]): continue
-                    addr_lines.append(wl)
-                raw_8 = " ".join(addr_lines)
-                break
-
-    address_full = strip_address_noise(raw_8)
+        m = re.search(r"8\.\s*(.*?)(?=\s*9\.)", blob, re.DOTALL)
+        if m: raw_8 = m.group(1).strip()
+        
+    address_full = strip_address_noise(raw_8 if raw_8 else blob)
     postcode = extract_postcode(address_full)
     addr_clean = re.sub(re.escape(postcode), "", address_full, flags=re.I).strip().strip(",").strip() if postcode else address_full
 
@@ -257,26 +239,26 @@ def parse_licence(raw: str) -> dict:
     }
 
 # ─────────────────────────────────────────────
-#  PDF — PERMISSION LETTER
+#  PDF GENERATORS
 # ─────────────────────────────────────────────
-def _src(fn): return os.path.join(SRC_DIR, fn)
+def _find_img(base_name):
+    for ext in [".png", ".jpg", ".jpeg", ".PNG", ".JPG"]:
+        p = os.path.join(SRC_DIR, base_name + ext)
+        if os.path.exists(p): return p
+    return None
 
 def generate_permission_letter(data: dict) -> bytes:
     buf = io.BytesIO()
     c = canvas.Canvas(buf, pagesize=letter, pageCompression=1)
     pw, ph = letter
-    bg = _src("image_f4efbe.png"); sig = _src("signature.png")
-    if os.path.exists(bg): c.drawImage(bg, 0, 0, width=pw, height=ph)
+    bg = _find_img("image_f4efbe") or _find_img("1")
+    sig = _find_img("signature")
+    if bg: c.drawImage(bg, 0, 0, width=pw, height=ph)
     c.setFont("Helvetica", 11)
     c.drawRightString(pw - 54, 595, data["date"])
     c.setFont("Helvetica-Bold", 22)
     c.drawCentredString(pw / 2, 550, "PERMISSION LETTER")
     c.setFont("Helvetica", 11)
-    c.drawString(54, 520, "To Whom It May Concern,")
-    c.drawString(54, 490, "We confirm that the below vehicle can be used for the carriage of passengers for hire and reward by prior")
-    c.drawString(54, 475, f"appointments (private hire) as specified on insurance policy: {data['insurance_policy']}")
-    c.drawString(54, 460, "We authorise and give permission to the following individual to use the vehicle for all private hire bookings")
-    c.drawString(54, 445, "from UBER, BOLT, OLA, FREE NOW app, WHEELY and other private hire operators.")
     for i, (label, val) in enumerate([
         ("Vehicle Registration", data["registration"]),
         ("Make and Model",       data["make_model"]),
@@ -288,77 +270,69 @@ def generate_permission_letter(data: dict) -> bytes:
         c.drawString(54, y, f"{label} :"); c.drawString(180, y, val)
     c.drawString(54, 275, "Hire start date. :"); c.drawString(160, 275, data["start_date"])
     c.drawString(54, 260, "Hire end date    :"); c.drawString(160, 260, data["end_date"])
-    c.drawString(54, 220, "Regards,")
-    if os.path.exists(sig): c.drawImage(sig, 40, 120, width=280, height=115, mask="auto")
-    c.drawString(54, 115, "Muhammad Sohail Qureshi")
-    c.drawString(54, 100, "Director (FA-IBI LTD)")
+    if sig: c.drawImage(sig, 40, 120, width=280, height=115, mask="auto")
     c.save(); buf.seek(0); return buf.getvalue()
 
-# ─────────────────────────────────────────────
-#  PDF — CONTRACT (Clean Form-Data Overlay Only)
-# ─────────────────────────────────────────────
 def generate_contract(data: dict) -> bytes:
     buf = io.BytesIO()
     cv = canvas.Canvas(buf, pagesize=letter, pageCompression=1)
     W, H = 612, 792
-    L, R = 28, 584
-    BW = R - L   
+    
+    bg1 = _find_img("1")
+    bg2 = _find_img("2")
 
-    # PAGE 1 - Only stamps raw data parameters on top of layout coordinates
+    # ──── PAGE 1 ────
+    if bg1:
+        cv.drawImage(bg1, 0, 0, width=W, height=H)
+    
     cv.setFont("Helvetica-Bold", 10)
-    cv.drawString(308, 715, data.get("contract_no", ""))
-    cv.drawString(450, 715, f"Date: {data.get('date', '')}")
-
-    # Hirer Details Positions
+    cv.drawString(335, 712, data.get("contract_no", ""))
+    
+    # Hirer Details Positioning Lines
     cv.setFont("Helvetica", 9)
-    cv.drawString(90, 665, data.get("driver_name", ""))
-    cv.drawString(430, 665, data.get("dob", ""))
-    cv.drawString(90, 643, data.get("address", ""))
-    cv.drawString(415, 643, data.get("postcode", ""))
-    cv.drawString(90, 621, data.get("license_no", ""))
-    cv.drawString(280, 621, data.get("issuing_authority", ""))
-    cv.drawString(480, 621, data.get("expiry_date", ""))
-    cv.drawString(90, 599, data.get("phone", ""))
-    cv.drawString(250, 599, data.get("email", ""))
+    cv.drawString(110, 667, data.get("driver_name", ""))
+    cv.drawString(460, 667, data.get("dob", ""))
+    cv.drawString(110, 642, data.get("address", ""))
+    cv.drawString(455, 642, data.get("postcode", ""))
+    cv.drawString(110, 617, data.get("license_no", ""))
+    cv.drawString(290, 617, data.get("issuing_authority", ""))
+    cv.drawString(485, 617, data.get("expiry_date", ""))
+    cv.drawString(110, 592, data.get("phone", ""))
+    cv.drawString(260, 592, data.get("email", ""))
 
-    # Financial Overlay
+    # Financial Parameters Overlay
     cv.setFont("Helvetica-Bold", 10)
-    cv.drawString(90, 440, data.get("rent", ""))
-    cv.drawString(110, 412, data.get("rate", ""))
-    cv.drawString(90, 395, data.get("deposit", ""))
+    cv.drawString(115, 437, data.get("rent", ""))
+    cv.drawString(110, 396, data.get("rate", ""))
+    cv.drawString(100, 357, data.get("deposit", ""))
 
     # Hire Dates Overlay
     cv.setFont("Helvetica", 9)
-    cv.drawString(110, 275, data.get("start_date", ""))
-    cv.drawString(170, 259, data.get("expected_return", ""))
+    cv.drawString(120, 267, data.get("start_date", ""))
+    cv.drawString(200, 251, data.get("expected_return", ""))
 
-    # Vehicle Overlay
+    # Vehicle Specifications Overlay
     cv.setFont("Helvetica-Bold", 9)
-    cv.drawString(65, 175, data.get("car_make", ""))
-    cv.drawString(235, 175, data.get("registration", ""))
-    cv.drawString(430, 175, data.get("car_model", ""))
+    cv.drawString(75, 166, data.get("car_make", ""))
+    cv.drawString(275, 166, data.get("registration", ""))
+    cv.drawString(460, 166, data.get("car_model", ""))
 
-    cv.setFont("Helvetica", 10); cv.drawCentredString(W/2, 36, "1")
-
-    # PAGE 2
+    # ──── PAGE 2 ────
     cv.showPage()
+    if bg2:
+        cv.drawImage(bg2, 0, 0, width=W, height=H)
+        
     cv.setFont("Helvetica-Bold", 9)
-    cv.drawString(130, 715, data.get("contract_no", ""))
-    cv.drawString(380, 715, data.get("registration", ""))
+    cv.drawString(145, 712, data.get("contract_no", ""))
+    cv.drawString(390, 712, data.get("registration", ""))
 
-    cv.setFont("Helvetica", 10); cv.drawCentredString(W/2, 32, "2")
     cv.save(); buf.seek(0); return buf.getvalue()
 
 # ─────────────────────────────────────────────
-#  STREAMLIT UI LAYOUT
+#  STREAMLIT UI ENGINE
 # ─────────────────────────────────────────────
 st.set_page_config(page_title="FA-IBI Workspace", layout="centered")
-st.markdown("""
-<style>
-#MainMenu,footer,header,[data-testid="stToolbar"]{display:none!important;}
-.main .block-container{padding-top:1rem!important;max-width:100%!important;}
-</style>
-""", unsafe_allow_html=True)
+st.markdown("<style>#MainMenu,footer,header,[data-testid='stToolbar']{display:none!important;}</style>", unsafe_allow_html=True)
 
 if "authenticated" not in st.session_state: st.session_state.authenticated = False
 if st.query_params.get("session") == "active": st.session_state.authenticated = True
@@ -369,7 +343,6 @@ if not st.session_state.authenticated:
         st.query_params["session"] = "active"; st.rerun()
     else: st.stop()
 
-# Persistent Global Context Initialization
 for k, v in dict(
     ocr_name="", ocr_licence="", ocr_address="", ocr_postcode="",
     ocr_dob="", ocr_expiry="", last_scan_id="",
@@ -382,20 +355,18 @@ for k, v in dict(
 
 st.title("FA-IBI Master Document Workspace")
 
-# ─────────────────────────────────────────────
-#  GLOBAL DATA AUTOMATION PANEL (Fixed Tab Sync)
-# ─────────────────────────────────────────────
+# GLOBAL AUTOMATION CONTROL
 st.markdown("### 🎛️ Shared Data Automation Panel")
 if st.session_state.scan_msg:  st.success(st.session_state.scan_msg)
 if st.session_state.fleet_msg: st.info(st.session_state.fleet_msg)
 col_scan, col_fleet = st.columns(2)
 
 with col_scan:
-    uploaded = st.file_uploader("📷 Driver's Licence Scanner", type=["jpg","png","jpeg"], key="global_licence_uploader")
+    uploaded = st.file_uploader("📷 Driver's Licence Scanner", type=["jpg","png","jpeg"], key="global_pane_scanner")
     if uploaded and pytesseract:
         fid = f"{uploaded.name}_{uploaded.size}"
         if st.session_state.last_scan_id != fid:
-            with st.spinner("Scanning Licence Structure..."):
+            with st.spinner("Processing Document Elements..."):
                 try:
                     raw = run_ocr(uploaded)
                     p = parse_licence(raw)
@@ -405,9 +376,9 @@ with col_scan:
                     st.session_state.ocr_postcode = p["postcode"]
                     st.session_state.ocr_dob      = p["dob"]
                     st.session_state.ocr_expiry   = p["expiry"]
-                    st.session_state.scan_msg     = "✅ Licence scanned — fields populated across all tabs!"
+                    st.session_state.scan_msg     = "✅ Scan Successful — Synced to workspace!"
                 except Exception as e:
-                    st.session_state.scan_msg = f"⚠️ Scan error: {e}"
+                    st.session_state.scan_msg = f"⚠️ Scan parsing failed: {e}"
                 st.session_state.last_scan_id = fid
             st.rerun()
 
@@ -417,7 +388,7 @@ with col_fleet:
     if st.session_state.sel_reg:
         hit = [o for o in opts if o.startswith(st.session_state.sel_reg)]
         if hit: cur = hit[0]
-    chosen = st.selectbox("🚗 Select Workspace Vehicle", opts, index=opts.index(cur), key="global_fleet_selector")
+    chosen = st.selectbox("🚗 Select Fleet Vehicle", opts, index=opts.index(cur), key="global_pane_fleet")
     if chosen != "-- Manual Entry --":
         rk = chosen.split(" (")[0]
         if st.session_state.sel_reg != rk:
@@ -426,7 +397,7 @@ with col_fleet:
                 mk, mo = split_make_model(car["model"])
                 st.session_state.sel_reg = car["reg"]
                 st.session_state.sel_make = mk; st.session_state.sel_model = mo
-                st.session_state.fleet_msg = f"✅ Vehicle {rk} set globally!"; st.rerun()
+                st.session_state.fleet_msg = f"✅ Fleet specs synchronized!"; st.rerun()
     else:
         if st.session_state.sel_reg:
             st.session_state.sel_reg = st.session_state.sel_make = st.session_state.sel_model = ""
@@ -434,35 +405,30 @@ with col_fleet:
 
 st.markdown("---")
 
-# Safe Execution Block for Contract Submissions
 if st.session_state.pending_contract:
     try:
-        pdf_bytes = generate_contract(st.session_state.pending_contract)
-        st.session_state.contract_pdf = pdf_bytes
+        st.session_state.contract_pdf = generate_contract(st.session_state.pending_contract)
         st.session_state.contract_no  = st.session_state.pending_contract["contract_no"]
     except Exception as e:
-        st.error(f"Execution Error during contract build: {e}")
+        st.error(f"Compilation Aborted: {e}")
     finally:
         st.session_state.pending_contract = None
 
-# ─────────────────────────────────────────────
-#  WORKFLOW TABS
-# ─────────────────────────────────────────────
 tab1, tab2 = st.tabs(["📝 Permission Letter", "📜 Contract Generator"])
 
 with tab1:
     with st.form("perm_form"):
         c1, c2 = st.columns(2)
         with c1:
-            p_date = st.date_input("Document Date", datetime.now(), format="DD/MM/YYYY", key="p_doc_date")
+            p_date = st.date_input("Document Date", datetime.now(), format="DD/MM/YYYY", key="p_date_entry")
             p_ins  = st.text_input("Insurance Policy No", "HAVFL-000211")
             p_reg  = st.text_input("Vehicle Registration", value=st.session_state.sel_reg)
             p_mod  = st.text_input("Make & Model", value=f"{st.session_state.sel_make} {st.session_state.sel_model}".strip())
         with c2:
             p_name  = st.text_input("Driver Full Name",   value=st.session_state.ocr_name)
             p_lic   = st.text_input("Driving Licence No", value=st.session_state.ocr_licence)
-            p_start = st.date_input("Hire Start Date", datetime.now(), format="DD/MM/YYYY", key="p_hire_start")
-            p_end   = st.date_input("Hire End Date",   datetime.now(), format="DD/MM/YYYY", key="p_hire_end")
+            p_start = st.date_input("Hire Start Date", datetime.now(), format="DD/MM/YYYY", key="p_start_entry")
+            p_end   = st.date_input("Hire End Date",   datetime.now(), format="DD/MM/YYYY", key="p_end_entry")
         p_addr = st.text_area("Driver Address", value=st.session_state.ocr_address)
         go_p = st.form_submit_button("🖨️ Generate Permission Letter PDF")
 
@@ -480,8 +446,8 @@ with tab1:
 
 with tab2:
     if st.session_state.contract_pdf:
-        st.success(f"🎉 Contract {st.session_state.contract_no} compiled successfully!")
-        st.download_button("📥 Download Generated Contract PDF", data=st.session_state.contract_pdf, file_name=f"FA_IBI_Contract_{st.session_state.contract_no}.pdf", mime="application/pdf")
+        st.success(f"✅ Ready! Contract Template Generated.")
+        st.download_button("📥 Download 2-Page Contract PDF", data=st.session_state.contract_pdf, file_name=f"Contract_{st.session_state.contract_no}.pdf", mime="application/pdf")
         st.markdown("---")
 
     with st.form("contract_form"):
@@ -494,7 +460,7 @@ with tab2:
             c_post = st.text_input("Postcode",      value=st.session_state.ocr_postcode)
             c_dob  = st.text_input("Date of Birth (DD/MM/YYYY)", value=normalize_date(st.session_state.ocr_dob))
         with cc2:
-            c_date = st.date_input("Contract Date", datetime.now(), format="DD/MM/YYYY", key="c_contract_date")
+            c_date = st.date_input("Contract Date", datetime.now(), format="DD/MM/YYYY", key="c_date_entry")
             c_lic  = st.text_input("Licence No",  value=st.session_state.ocr_licence)
             c_exp  = st.text_input("Date of Expiry (DD/MM/YYYY)", value=normalize_date(st.session_state.ocr_expiry))
             c_auth = st.text_input("Issuing Authority", "DVLA")
@@ -509,8 +475,8 @@ with tab2:
 
         st.markdown("---"); st.subheader("Hire Period")
         pt1, pt2 = st.columns(2)
-        with pt1: c_st  = st.date_input("Hire Start",       datetime.now(), format="DD/MM/YYYY", key="c_hire_start")
-        with pt2: c_ret = st.date_input("Expected Return",   datetime.now(), format="DD/MM/YYYY", key="c_expected_return")
+        with pt1: c_st  = st.date_input("Hire Start",       datetime.now(), format="DD/MM/YYYY", key="c_start_entry")
+        with pt2: c_ret = st.date_input("Expected Return",   datetime.now(), format="DD/MM/YYYY", key="c_return_entry")
 
         st.markdown("---"); st.subheader("Vehicle")
         pv1, pv2, pv3 = st.columns(3)
