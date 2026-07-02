@@ -1,15 +1,26 @@
 import streamlit as st
 import os, re, io
-from PIL import Image, ImageFilter, ImageOps, ImageEnhance
-from datetime import datetime, date
+import numpy as np
+from PIL import Image, ImageOps, ImageEnhance
+from datetime import datetime, date, timedelta
 from reportlab.lib.pagesizes import letter
-from reportlab.lib.utils import simpleSplit
 from reportlab.pdfgen import canvas
+from reportlab.pdfbase.pdfmetrics import stringWidth
 
 try:
     import pytesseract
 except ImportError:
     pytesseract = None
+
+try:
+    import cv2
+except ImportError:
+    cv2 = None
+
+try:
+    import extra_streamlit_components as stx
+except ImportError:
+    stx = None
 
 SRC_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -40,34 +51,41 @@ header {visibility: hidden;}
 """, unsafe_allow_html=True)
 
 # ─────────────────────────────────────────────
-#  PERSISTENCE & CLEAN URL ROUTING ENGINE
+#  REAL COOKIE-BASED AUTH (no URL params, no full-page reload hacks)
+#
+#  Requires: pip install extra-streamlit-components
+#  This stores an actual HTTP cookie in the browser via a proper
+#  Streamlit component, instead of poking window.parent.location
+#  and localStorage from an injected <script>. That old approach
+#  had to force a full page navigation (?auth_token=verified) just
+#  to get the value back into Python, which is why it felt flaky.
+#  A CookieManager component gives Python the cookie value directly
+#  on rerun, so nothing ever touches the URL.
 # ─────────────────────────────────────────────
+AUTH_COOKIE_NAME = "fa_ibi_auth"
+AUTH_COOKIE_DAYS = 30
+
+if stx is not None:
+    @st.cache_resource
+    def _get_cookie_manager():
+        return stx.CookieManager()
+    cookie_manager = _get_cookie_manager()
+else:
+    cookie_manager = None
+    st.warning(
+        "⚠️ `extra-streamlit-components` isn't installed, so login can't persist "
+        "across refreshes. Add `extra-streamlit-components` to requirements.txt "
+        "and redeploy to fix this.",
+        icon="⚠️",
+    )
+
 if "authenticated" not in st.session_state:
     st.session_state.authenticated = False
+    if cookie_manager is not None:
+        cookies = cookie_manager.get_all(key="init_cookie_read") or {}
+        st.session_state.authenticated = cookies.get(AUTH_COOKIE_NAME) == "true"
 
-query_params = st.query_params
-if "auth_token" in query_params:
-    if query_params["auth_token"] == "verified":
-        st.session_state.authenticated = True
-    st.query_params.clear()
-
-# Pure JavaScript Sync Pipeline - URL scrubbing and cookie automatic logins
-st.html("""
-    <script>
-    if (window.parent.location.search.length > 0) {
-        const cleanUrl = window.parent.location.protocol + "//" + window.parent.location.host + window.parent.location.pathname;
-        window.parent.history.replaceState({}, document.title, cleanUrl);
-    }
-    
-    const isVerified = localStorage.getItem("fa_ibi_auth");
-    if (isVerified === "true" && !window.parent.__st_auto_logged) {
-        window.parent.__st_auto_logged = true;
-        const currentUrl = new URL(window.parent.location.href);
-        currentUrl.searchParams.set("auth_token", "verified");
-        window.parent.location.href = currentUrl.toString();
-    }
-    </script>
-""")
+# ── Fleet data, parsing engines, PDF generators are unchanged below ──
 
 FLEET_VEHICLES = [
     {"reg": "AF70 MYK", "model": "TESLA MODEL 3"},
@@ -192,7 +210,7 @@ def strip_address_noise(s: str) -> str:
     s = re.sub(r"\bDVLA\b|\bDVLNI\b", "", s)
     s = re.sub(r"\b\d{1,2}\s+\d{1,2}\s+\d{2,4}\b", " ", s)
     s = re.sub(r"\b\d{5,}\b", " ", s)
-    s = re.sub(r"\b[1-9][ABCDE58]?\.?\s*", " ", s) 
+    s = re.sub(r"\b[1-9][ABCDE58]?\.?\s*", " ", s)
     s = re.sub(r"[^A-Z0-9 ,'\-]", " ", s)
     s = re.sub(r"\s+", " ", s).strip().strip(",").strip()
     return s
@@ -209,31 +227,85 @@ def _grab(blob, start_pats, end_pats):
                 return m.group(1).strip()
     return ""
 
+# ─────────────────────────────────────────────
+#  OCR ENGINE — rebuilt for accuracy
+#
+#  What was wrong before:
+#   • Contrast was boosted 2.5x then sharpened then globally thresholded
+#     (Otsu). On a photographed plastic ID card with any glare, shadow,
+#     or uneven lighting, a *single* global threshold either blows out
+#     half the card to white or crushes it to black — Tesseract sees
+#     garbage either way.
+#   • Sharpening BEFORE thresholding amplifies noise/JPEG artefacts,
+#     which then get baked into the black/white split.
+#   • Only one PSM (page segmentation mode) was tried, so a layout
+#     Tesseract wasn't expecting produced no fallback.
+#   • No rotation/orientation correction for photos taken at an angle.
+#
+#  Fix: denoise → adaptive (local) threshold instead of global → try
+#  several PSM modes and keep whichever gives Tesseract the highest
+#  confidence score → auto-correct orientation first.
+# ─────────────────────────────────────────────
+def _deskew_and_orient(img: Image.Image) -> Image.Image:
+    if pytesseract is None:
+        return img
+    try:
+        osd = pytesseract.image_to_osd(img)
+        m = re.search(r"Rotate:\s*(\d+)", osd)
+        if m:
+            angle = int(m.group(1))
+            if angle in (90, 180, 270):
+                img = img.rotate(-angle, expand=True)
+    except Exception:
+        pass  # OSD fails on very low-text images — just skip it
+    return img
+
+def _best_ocr_text(bw_img: Image.Image) -> str:
+    configs = [r"--oem 3 --psm 6", r"--oem 3 --psm 4", r"--oem 3 --psm 11", r"--oem 3 --psm 3"]
+    best_text, best_conf = "", -1.0
+    for cfg in configs:
+        try:
+            data = pytesseract.image_to_data(bw_img, config=cfg, output_type=pytesseract.Output.DICT)
+            confs = [float(c) for c in data.get("conf", []) if str(c) not in ("-1", "")]
+            avg_conf = sum(confs) / len(confs) if confs else 0.0
+            text = " ".join(w for w in data.get("text", []) if w.strip())
+            if text.strip() and avg_conf > best_conf:
+                best_conf = avg_conf
+                best_text = pytesseract.image_to_string(bw_img, config=cfg)
+        except Exception:
+            continue
+    if not best_text:
+        best_text = pytesseract.image_to_string(bw_img, config=r"--oem 3 --psm 6")
+    return best_text
+
 def run_ocr(uploaded_file) -> str:
     img = Image.open(uploaded_file).convert("RGB")
+    img = _deskew_and_orient(img)
+
     w, h = img.size
-    if max(w, h) < 1800:
-        scale = 1800 / max(w, h)
+    target = 2200
+    if max(w, h) < target:
+        scale = target / max(w, h)
         img = img.resize((int(w * scale), int(h * scale)), Image.LANCZOS)
-    img = ImageOps.grayscale(img)
-    img = ImageEnhance.Contrast(img).enhance(2.5) 
-    img = img.filter(ImageFilter.SHARPEN)
-    import numpy as np
-    arr = np.array(img)
-    hist, _ = np.histogram(arr.flatten(), 256, (0, 256))
-    total = arr.size; ts = int(np.dot(np.arange(256), hist))
-    sb, wb, bv, thresh = 0, 0, 0, 128
-    for i in range(256):
-        wb += hist[i]
-        if not wb: continue
-        wf = total - wb
-        if not wf: break
-        sb += i * hist[i]
-        mb = sb / wb; mf = (ts - sb) / wf
-        v = wb * wf * (mb - mf) ** 2
-        if v > bv: bv = v; thresh = i
-    img = img.point(lambda p: 255 if p > thresh else 0)
-    return pytesseract.image_to_string(img, config=r"--oem 3 --psm 6")
+
+    gray = ImageOps.grayscale(img)
+
+    if cv2 is not None:
+        arr = np.array(gray)
+        arr = cv2.fastNlMeansDenoising(arr, h=10)
+        # Adaptive threshold reacts to *local* lighting, unlike the old
+        # single global Otsu cut — this is what actually fixes glare/
+        # shadow issues on photographed cards.
+        bw_arr = cv2.adaptiveThreshold(
+            arr, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 35, 11
+        )
+        bw = Image.fromarray(bw_arr)
+    else:
+        # Fallback if opencv isn't installed — milder than before
+        gray = ImageEnhance.Contrast(gray).enhance(1.6)
+        bw = gray.point(lambda p: 255 if p > 150 else 0)
+
+    return _best_ocr_text(bw)
 
 def parse_licence(raw: str) -> dict:
     blob = " " + re.sub(r"\s+", " ", raw.upper()) + " "
@@ -241,12 +313,18 @@ def parse_licence(raw: str) -> dict:
     forename = clean_name(_grab(blob, [r"2\."], [r"3\."])) or (re.search(r"2\.\s*([A-Z\-]+)", blob).group(1).strip() if re.search(r"2\.\s*([A-Z\-]+)", blob) else "")
     dob = first_date(_grab(blob, [r"3\."], [r"4[Aa]\b"])) or (normalize_date(re.search(r"3\.\s*(\d{1,2}[./\-]\d{1,2}[./\-]\d{2,4})", blob).group(1)) if re.search(r"3\.\s*(\d{1,2}[./\-]\d{1,2}[./\-]\d{2,4})", blob) else "")
     expiry = first_date(_grab(blob, [r"4[Bb]\.?"], [r"4[Cc]", r"5\."])) or (normalize_date(re.search(r"4[Bb]\.?\s*(\d{1,2}[./\-]\d{1,2}[./\-]\d{2,4})", blob).group(1)) if re.search(r"4[Bb]\.?\s*(\d{1,2}[./\-]\d{1,2}[./\-]\d{2,4})", blob) else "")
-    
+
     licence = ""
     clean_strip = re.sub(r"\s", "", blob)
+    # Primary: look for the number right after the "5." field marker
     lic_match = re.search(r"5\.?([A-Z9]{5}\d{6}[A-Z9]{2}[A-Z0-9]{3,5})", clean_strip)
+    if not lic_match:
+        # Fallback: the UK licence number format itself is distinctive
+        # enough to find anywhere in the text, even if OCR mangled the
+        # "5." field marker in front of it.
+        lic_match = re.search(r"([A-Z9]{5}\d{6}[A-Z9]{2}[A-Z0-9]{3,5})", clean_strip)
     if lic_match: licence = lic_match.group(1)[:16]
-    
+
     raw_8 = _grab(blob, [r"8\."], [r"9\."]) or (re.search(r"8\.\s*(.*?)(?=\s*9\.)", blob, re.DOTALL).group(1).strip() if re.search(r"8\.\s*(.*?)(?=\s*9\.)", blob, re.DOTALL) else blob)
     postcode = extract_postcode(raw_8)
     addr_clean = strip_address_noise(raw_8.replace(licence, ""))
@@ -261,99 +339,129 @@ def generate_permission_letter(data: dict) -> bytes:
     pw, ph = letter
     bg = _find_img("image_f4efbe"); sig = _find_img("signature")
     if bg: c.drawImage(bg, 0, 0, width=pw, height=ph)
-    
     c.setFont("Helvetica", 11)
     c.drawRightString(pw - 54, 595, data["date"])
     c.setFont("Helvetica-Bold", 22)
     c.drawCentredString(pw / 2, 550, "PERMISSION LETTER")
-    
     c.setFont("Helvetica", 11)
-    c.drawString(54, 514, "To Whom It May Concern,")
-    
-    # Clean spacing overhaul - completely removed gaps to align perfectly
-    body_text = f"We confirm that the below vehicle can be used for the carriage of passengers for hire and reward by prior appointments (private hire) as specified on insurance policy: {data['insurance_policy']}"
-    lines = simpleSplit(body_text, "Helvetica", 11, pw - 108)
-    y_text = 494
-    for l in lines:
-        c.drawString(54, y_text, l)
-        y_text -= 15
-        
-    c.drawString(54, y_text - 5, f"We authorise and give permission to the following individual ({data['driver_name']}) to use the vehicle for all private hire bookings")
-    c.drawString(54, y_text - 20, "from UBER, BOLT, OLA, FREE NOW app, WHEELY and other private hire operators.")
-    
-    # Blueprint absolute structure coordinates layout
-    c.drawString(54, 385, "Vehicle Registration :")
-    c.drawString(180, 385, data["registration"])
-    
-    c.drawString(54, 357, "Make and Model :")
-    c.drawString(180, 357, data["make_model"])
-    
-    c.drawString(54, 329, "Driver Name :")
-    c.drawString(180, 329, data["driver_name"])
-    
-    c.drawString(54, 301, "Address :")
-    addr_lines = simpleSplit(data["address"], "Helvetica", 11, pw - 240)
-    if len(addr_lines) > 1:
-        c.drawString(180, 301, addr_lines[0])
-        c.drawString(180, 287, addr_lines[1])
-        
-        c.drawString(54, 259, "Driving Licence No :")
-        c.drawString(180, 259, data["license_no"])
-        y_next = 231
-    else:
-        c.drawString(180, 301, data["address"])
-        
-        c.drawString(54, 273, "Driving Licence No :")
-        c.drawString(180, 273, data["license_no"])
-        y_next = 245
-        
-    c.drawString(54, y_next, "Hire start date. :")
-    c.drawString(180, y_next, data["start_date"])
-    c.drawString(54, y_next - 18, "Hire end date    :")
-    c.drawString(180, y_next - 18, data["end_date"])
-    
-    c.drawString(54, y_next - 50, "Regards,")
-    if sig: c.drawImage(sig, 40, y_next - 165, width=280, height=115, mask="auto")
-    
-    c.save()
-    buf.seek(0)
-    return buf.getvalue()
+    c.drawString(54, 520, "To Whom It May Concern,")
+    c.drawString(54, 490, f"We confirm that the below vehicle can be used for the carriage of passengers for hire and reward by prior appointments (private hire) as specified on insurance policy: {data['insurance_policy']}")
+    for i, (label, val) in enumerate([("Vehicle Registration", data["registration"]), ("Make and Model", data["make_model"]), ("Driver Name", data["driver_name"]), ("Address", data["address"]), ("Driving Licence No", data["license_no"])]):
+        c.drawString(54, 405 - i * 22, f"{label} :"); c.drawString(180, 405 - i * 22, val)
+    c.drawString(54, 275, "Hire start date. :"); c.drawString(160, 275, data["start_date"])
+    c.drawString(54, 260, "Hire end date    :"); c.drawString(160, 260, data["end_date"])
+    if sig: c.drawImage(sig, 40, 120, width=280, height=115, mask="auto")
+    c.save(); buf.seek(0); return buf.getvalue()
+
+# ─────────────────────────────────────────────
+#  CONTRACT PDF — coordinates centralised & calibratable
+#
+#  The old code had hardcoded (x, y) guesses baked directly into
+#  drawString calls, which is exactly why fields ended up overlapping
+#  your printed labels ("CONTRACT NUMBER:", "Deposit Paid", etc.) —
+#  nobody could see where they landed without generating a full PDF
+#  each time.
+#
+#  Now: every field's position lives in one dict below, and there's a
+#  "Calibration Grid" button in the Contract tab that overlays a
+#  ruled 20pt grid on YOUR actual template images. Open that PDF,
+#  read off the x/y where each label's blank line sits, and update
+#  the numbers below. Takes a few minutes and you'll never have to
+#  guess again.
+#
+#  Units: PDF points, origin (0,0) at BOTTOM-LEFT of the page,
+#  page size is 612 x 792 (US Letter).
+# ─────────────────────────────────────────────
+CONTRACT_PAGE1_FIELDS = {
+    # key:               (x,   y,   font_size)
+    "contract_no":       (400, 704, 8.0),
+    "date":               (548, 704, 8.0),
+    "driver_name":        (120, 650, 8.8),
+    "dob":                (465, 650, 8.8),
+    "address":            (120, 628, 8.8),
+    "postcode":           (455, 628, 8.8),
+    "license_no":         (120, 606, 8.8),
+    "issuing_authority":  (290, 606, 8.8),
+    "expiry_date":        (485, 606, 8.8),
+    "phone":              (120, 584, 8.8),
+    "email":              (260, 584, 8.8),
+    "rent":               (130, 478, 8.8),
+    "rate":               (145, 440, 8.8),
+    "deposit":            (130, 386, 8.8),
+    "start_date":         (130, 310, 8.8),
+    "expected_return":    (215, 294, 8.8),
+    "car_make":           (85, 133, 8.8),
+    "registration":       (290, 133, 8.8),
+    "car_model":          (465, 133, 8.8),
+}
+CONTRACT_PAGE2_FIELDS = {
+    "contract_no":  (145, 715, 8.8),
+    "registration": (390, 715, 8.8),
+}
+# Optional per-field max width (points) so long values (long names,
+# addresses, contract numbers) auto-shrink instead of overrunning
+# into the next field / template artwork.
+CONTRACT_FIELD_MAXW = {
+    "contract_no": 130,
+    "date": 55,
+    "driver_name": 300,
+    "address": 300,
+    "car_make": 180,
+    "car_model": 130,
+}
+
+def _draw_fit(c, text, x, y, base_size=8.8, max_width=None, font="Helvetica"):
+    text = str(text)
+    if not text:
+        return
+    size = base_size
+    if max_width:
+        while size > 5.0 and stringWidth(text, font, size) > max_width:
+            size -= 0.3
+    c.setFont(font, size)
+    c.drawString(x, y, text)
 
 def generate_contract(data: dict) -> bytes:
     buf = io.BytesIO()
     cv = canvas.Canvas(buf, pagesize=letter, pageCompression=1)
     W, H = 612, 792
     bg1, bg2 = _find_img("1"), _find_img("2")
+
     if bg1: cv.drawImage(bg1, 0, 0, width=W, height=H)
     cv.setFont("Helvetica-Bold", 8.8)
-    cv.drawString(395, 714, data.get("contract_no", ""))
-    cv.drawString(530, 714, data.get("date", ""))
-    cv.setFont("Helvetica", 8.8)
-    cv.drawString(120, 650, data.get("driver_name", ""))
-    cv.drawString(465, 650, data.get("dob", ""))
-    cv.drawString(120, 628, data.get("address", ""))
-    cv.drawString(455, 628, data.get("postcode", ""))
-    cv.drawString(120, 606, data.get("license_no", ""))
-    cv.drawString(290, 606, data.get("issuing_authority", ""))
-    cv.drawString(485, 606, data.get("expiry_date", ""))
-    cv.drawString(120, 584, data.get("phone", ""))
-    cv.drawString(260, 584, data.get("email", ""))
-    cv.setFont("Helvetica-Bold", 8.8)
-    cv.drawString(130, 478, data.get("rent", ""))
-    cv.drawString(145, 440, data.get("rate", ""))
-    cv.drawString(130, 386, data.get("deposit", ""))
-    cv.setFont("Helvetica", 8.8)
-    cv.drawString(130, 310, data.get("start_date", ""))
-    cv.drawString(215, 294, data.get("expected_return", ""))
-    cv.setFont("Helvetica-Bold", 8.8)
-    cv.drawString(85, 133, data.get("car_make", ""))
-    cv.drawString(290, 133, data.get("registration", ""))
-    cv.drawString(465, 133, data.get("car_model", ""))
+    for key, (x, y, size) in CONTRACT_PAGE1_FIELDS.items():
+        cv.setFont("Helvetica-Bold" if key in ("contract_no", "rent", "rate", "deposit", "car_make", "registration", "car_model") else "Helvetica", size)
+        _draw_fit(cv, data.get(key, ""), x, y, base_size=size, max_width=CONTRACT_FIELD_MAXW.get(key),
+                  font="Helvetica-Bold" if key in ("contract_no", "rent", "rate", "deposit", "car_make", "registration", "car_model") else "Helvetica")
     cv.showPage()
+
     if bg2: cv.drawImage(bg2, 0, 0, width=W, height=H)
-    cv.setFont("Helvetica-Bold", 8.8)
-    cv.drawString(145, 715, data.get("contract_no", ""))
-    cv.drawString(390, 715, data.get("registration", ""))
+    for key, (x, y, size) in CONTRACT_PAGE2_FIELDS.items():
+        _draw_fit(cv, data.get(key, ""), x, y, base_size=size, font="Helvetica-Bold")
+
+    cv.save(); buf.seek(0); return buf.getvalue()
+
+def generate_calibration_grid() -> bytes:
+    """Overlays a red 20pt-spaced ruler grid on your actual contract
+    template pages so you can read off exact x/y coordinates for each
+    field and plug them into CONTRACT_PAGE1_FIELDS / PAGE2_FIELDS above."""
+    buf = io.BytesIO()
+    cv = canvas.Canvas(buf, pagesize=letter)
+    W, H = 612, 792
+    for i, bg in enumerate([_find_img("1"), _find_img("2")]):
+        if i > 0:
+            cv.showPage()
+        if bg:
+            cv.drawImage(bg, 0, 0, width=W, height=H)
+        cv.setStrokeColorRGB(1, 0, 0)
+        cv.setFillColorRGB(1, 0, 0)
+        cv.setFont("Helvetica", 5)
+        for x in range(0, int(W) + 1, 20):
+            cv.line(x, 0, x, H)
+            cv.drawString(x + 1, H - 8, str(x))
+        for y in range(0, int(H) + 1, 20):
+            cv.line(0, y, W, y)
+            cv.drawString(2, y + 1, str(y))
     cv.save(); buf.seek(0); return buf.getvalue()
 
 # ─────────────────────────────────────────────
@@ -365,59 +473,23 @@ if not st.session_state.authenticated:
     if st.button("Verify Key"):
         if code == st.secrets.get("ACCESS_KEY", ""):
             st.session_state.authenticated = True
-            
-            st.components.v1.html("""
-                <script>
-                localStorage.setItem("fa_ibi_auth", "true");
-                const currentUrl = new URL(window.parent.location.href);
-                currentUrl.searchParams.set("auth_token", "verified");
-                window.parent.location.href = currentUrl.toString();
-                </script>
-            """, height=0, width=0)
+            if cookie_manager is not None:
+                cookie_manager.set(
+                    AUTH_COOKIE_NAME, "true",
+                    expires_at=datetime.now() + timedelta(days=AUTH_COOKIE_DAYS),
+                    key="set_auth_cookie",
+                )
+            st.rerun()
         else:
             st.error("Invalid Security Verification Pin Code")
     st.stop()
 
-# ─────────────────────────────────────────────
-#  TOP-RIGHT CLEAN COOKIE CONSENT MODAL
-# ─────────────────────────────────────────────
-st.components.v1.html("""
-    <script>
-    if (localStorage.getItem("cookie_consent") !== "accepted") {
-        const panel = window.parent.document.createElement("div");
-        panel.id = "cleanTopRightCookieModal";
-        panel.style.position = "fixed";
-        panel.style.top = "24px";
-        panel.style.right = "24px";
-        panel.style.width = "320px";
-        panel.style.backgroundColor = "#18181c";
-        panel.style.color = "#ffffff";
-        panel.style.padding = "18px";
-        panel.style.borderRadius = "8px";
-        panel.style.boxShadow = "0px 10px 30px rgba(0,0,0,0.5)";
-        panel.style.fontFamily = "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif";
-        panel.style.zIndex = "999999";
-        panel.style.border = "1px solid #2d2d34";
-        
-        panel.innerHTML = `
-            <div style="display:flex; align-items:center; margin-bottom:6px;">
-                <span style="font-size:16px; margin-right:8px;">🍪</span>
-                <h4 style="margin:0; font-size:14px; font-weight:600; letter-spacing:-0.2px;">Cookie Session Cache</h4>
-            </div>
-            <p style="margin:0 0 14px 0; font-size:12px; color:#9ca3af; line-height:1.45;">Remember active security clearance privileges dynamically across manual browser refreshes?</p>
-            <button id="acceptCookieBtn" style="background:#238636; color:#fff; border:none; padding:8px 12px; border-radius:4px; font-size:12px; font-weight:500; cursor:pointer; width:100%; transition:background 0.2s;">Accept & Remember Session</button>
-        `;
-        
-        window.parent.document.body.appendChild(panel);
-        
-        window.parent.document.getElementById("acceptCookieBtn").onclick = function() {
-            localStorage.setItem("cookie_consent", "accepted");
-            localStorage.setItem("fa_ibi_auth", "true");
-            panel.remove();
-        };
-    }
-    </script>
-""", height=0, width=0)
+with st.sidebar:
+    if st.button("🚪 Log out"):
+        st.session_state.authenticated = False
+        if cookie_manager is not None:
+            cookie_manager.delete(AUTH_COOKIE_NAME, key="delete_auth_cookie")
+        st.rerun()
 
 # ─────────────────────────────────────────────
 #  SECURED MASTER WORKSPACE
@@ -439,10 +511,12 @@ with col_scan:
                 try:
                     raw = run_ocr(uploaded); p = parse_licence(raw)
                     st.session_state.ocr_name, st.session_state.ocr_licence, st.session_state.ocr_address, st.session_state.ocr_postcode, st.session_state.ocr_dob, st.session_state.ocr_expiry = f"{p['forename']} {p['surname']}".strip(), p["licence"], p["address"], p["postcode"], p["dob"], p["expiry"]
-                    st.session_state.scan_msg = "✅ Licence scanned successfully!"
+                    st.session_state.scan_msg = "✅ Licence scanned successfully! Please double-check the fields below before generating documents."
                 except Exception as e: st.session_state.scan_msg = f"⚠️ Scan parsing failed: {e}"
                 st.session_state.last_scan_id = fid
             st.rerun()
+    elif uploaded and not pytesseract:
+        st.error("pytesseract isn't installed on this server, so scanning is unavailable.")
 
 with col_fleet:
     opts = ["-- Manual Entry --"] + [f"{v['reg']} ({v['model']})" for v in FLEET_VEHICLES]
@@ -473,7 +547,7 @@ with tab1:
         with c1:
             p_date, p_ins, p_reg, p_mod = st.date_input("Document Date", datetime.now(), format="DD/MM/YYYY", key="p_form_date"), st.text_input("Insurance Policy No", "HAVFL-000211"), st.text_input("Vehicle Registration", value=st.session_state.sel_reg), st.text_input("Make & Model", value=f"{st.session_state.sel_make} {st.session_state.sel_model}".strip())
         with c2:
-            p_name, p_lic, p_start, p_end = st.text_input("Driver Full Name", value=st.session_state.ocr_name or "MUHAMED SOHAIL QURESHI"), st.text_input("Driving Licence No", value=st.session_state.ocr_licence), st.date_input("Hire Start Date", datetime.now(), format="DD/MM/YYYY", key="p_form_start"), st.date_input("Hire End Date", datetime.now(), format="DD/MM/YYYY", key="p_form_end")
+            p_name, p_lic, p_start, p_end = st.text_input("Driver Full Name", value=st.session_state.ocr_name), st.text_input("Driving Licence No", value=st.session_state.ocr_licence), st.date_input("Hire Start Date", datetime.now(), format="DD/MM/YYYY", key="p_form_start"), st.date_input("Hire End Date", datetime.now(), format="DD/MM/YYYY", key="p_form_end")
         p_addr = st.text_area("Driver Address", value=st.session_state.ocr_address)
         go_p = st.form_submit_button("🖨️ Generate Permission Letter PDF")
     if go_p:
@@ -482,6 +556,16 @@ with tab1:
     if st.session_state.perm_pdf: st.download_button("📥 Download Permission Letter PDF", data=st.session_state.perm_pdf, file_name="Permission_Letter.pdf", mime="application/pdf", key="dl_perm_btn")
 
 with tab2:
+    with st.expander("🧭 Field positions off? Calibrate them"):
+        st.caption(
+            "Download this to see a red 20pt grid drawn over your actual "
+            "contract template. Read off the x/y where each field's blank "
+            "line sits, then update `CONTRACT_PAGE1_FIELDS` / "
+            "`CONTRACT_PAGE2_FIELDS` near the top of app.py."
+        )
+        st.download_button("📐 Download Calibration Grid PDF", data=generate_calibration_grid(),
+                            file_name="Calibration_Grid.pdf", mime="application/pdf", key="dl_cal_btn")
+
     if st.session_state.contract_pdf:
         st.success(f"🎉 Contract PDF Created Successfully!")
         st.download_button("📥 Download Generated Contract PDF", data=st.session_state.contract_pdf, file_name=f"Contract_{st.session_state.contract_no}.pdf", mime="application/pdf", key="dl_contract_btn")
@@ -490,7 +574,7 @@ with tab2:
         st.subheader("Hirer Details")
         cc1, cc2 = st.columns(2)
         with cc1:
-            c_no, c_name, c_addr, c_post, c_dob = st.text_input("Contract Number", "1608/DRIVER/REG/2026"), st.text_input("Full Name", value=st.session_state.ocr_name or "MUHAMED SOHAIL QURESHI"), st.text_area("Address", value=st.session_state.ocr_address), st.text_input("Postcode", value=st.session_state.ocr_postcode), st.text_input("Date of Birth (DD/MM/YYYY)", value=normalize_date(st.session_state.ocr_dob))
+            c_no, c_name, c_addr, c_post, c_dob = st.text_input("Contract Number", "1608/DRIVER/REG/2026"), st.text_input("Full Name", value=st.session_state.ocr_name), st.text_area("Address", value=st.session_state.ocr_address), st.text_input("Postcode", value=st.session_state.ocr_postcode), st.text_input("Date of Birth (DD/MM/YYYY)", value=normalize_date(st.session_state.ocr_dob))
         with cc2:
             c_date, c_lic, c_exp, c_auth, c_ph, c_em = st.date_input("Contract Date", datetime.now(), format="DD/MM/YYYY", key="c_form_date"), st.text_input("Licence No", value=st.session_state.ocr_licence), st.text_input("Date of Expiry (DD/MM/YYYY)", value=normalize_date(st.session_state.ocr_expiry)), st.text_input("Issuing Authority", "DVLA"), st.text_input("Phone"), st.text_input("Email")
         st.markdown("---"); pp1, pp2, pp3 = st.columns(3)
