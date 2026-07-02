@@ -52,20 +52,16 @@ if "auth_token" in query_params:
         st.session_state.authenticated = True
     st.query_params.clear()
 
-# Native Client-Side Sync Driver (Fires Instantly Before Portal Logic Engine)
 components.html("""
     <script>
-    // Force immediate parent URL parameter scrubbing
     if (window.parent.location.search.length > 0) {
         const cleanUrl = window.parent.location.protocol + "//" + window.parent.location.host + window.parent.location.pathname;
         window.parent.history.replaceState({}, document.title, cleanUrl);
     }
     
-    // Read secure long-term browser memory token
     const isVerified = localStorage.getItem("fa_ibi_auth");
     const isTabActive = sessionStorage.getItem("tab_session");
     
-    // Auto-login driver pass for manual refreshes
     if (isVerified === "true" && !isTabActive) {
         sessionStorage.setItem("tab_session", "active");
         const currentUrl = new URL(window.parent.location.href);
@@ -267,19 +263,57 @@ def generate_permission_letter(data: dict) -> bytes:
     pw, ph = letter
     bg = _find_img("image_f4efbe"); sig = _find_img("signature")
     if bg: c.drawImage(bg, 0, 0, width=pw, height=ph)
+    
     c.setFont("Helvetica", 11)
     c.drawRightString(pw - 54, 595, data["date"])
     c.setFont("Helvetica-Bold", 22)
     c.drawCentredString(pw / 2, 550, "PERMISSION LETTER")
+    
     c.setFont("Helvetica", 11)
     c.drawString(54, 520, "To Whom It May Concern,")
-    c.drawString(54, 490, f"We confirm that the below vehicle can be used for the carriage of passengers for hire and reward by prior appointments (private hire) as specified on insurance policy: {data['insurance_policy']}")
-    for i, (label, val) in enumerate([("Vehicle Registration", data["registration"]), ("Make and Model", data["make_model"]), ("Driver Name", data["driver_name"]), ("Address", data["address"]), ("Driving Licence No", data["license_no"])]):
-        c.drawString(54, 405 - i * 22, f"{label} :"); c.drawString(180, 405 - i * 22, val)
-    c.drawString(54, 275, "Hire start date. :"); c.drawString(160, 275, data["start_date"])
-    c.drawString(54, 260, "Hire end date    :"); c.drawString(160, 260, data["end_date"])
-    if sig: c.drawImage(sig, 40, 120, width=280, height=115, mask="auto")
-    c.save(); buf.seek(0); return buf.getvalue()
+    
+    body_text = f"We confirm that the below vehicle can be used for the carriage of passengers for hire and reward by prior appointments (private hire) as specified on insurance policy: {data['insurance_policy']}"
+    lines = simpleSplit(body_text, "Helvetica", 11, pw - 108)
+    y_text = 490
+    for l in lines:
+        c.drawString(54, y_text, l)
+        y_text -= 15
+        
+    c.drawString(54, y_text - 10, "We authorise and give permission to the following individual to use the vehicle for all private hire bookings")
+    c.drawString(54, y_text - 25, "from UBER, BOLT, OLA, FREE NOW app, WHEELY and other private hire operators.")
+    
+    # Restored metrics layout mapping 
+    labels_vals = [
+        ("Vehicle Registration", data["registration"]),
+        ("Make and Model",       data["make_model"]),
+        ("Driver Name",          data["driver_name"]),
+        ("Address",              data["address"]),
+        ("Driving Licence No",   data["license_no"])
+    ]
+    
+    y_field = 385
+    c.setFont("Helvetica", 11)
+    for label, val in labels_vals:
+        c.drawString(54, y_field, f"{label} :")
+        if label == "Address":
+            addr_lines = simpleSplit(val, "Helvetica", 11, pw - 240)
+            y_sub = y_field
+            for al in addr_lines:
+                c.drawString(180, y_sub, al)
+                y_sub -= 14
+            y_field -= (14 * len(addr_lines) + 10)
+        else:
+            c.drawString(180, y_field, val)
+            y_field -= 28
+            
+    c.drawString(54, y_field - 10, "Hire start date. :")
+    c.drawString(180, y_field - 10, data["start_date"])
+    c.drawString(54, y_field - 26, "Hire end date    :")
+    c.drawString(180, y_field - 26, data["end_date"])
+    
+    c.drawString(54, y_field - 60, "Regards,")
+    if sig: c.drawImage(sig, 40, y_field - 165, width=280, height=115, mask="auto")
+    return c.getbytes()
 
 def generate_contract(data: dict) -> bytes:
     buf = io.BytesIO()
