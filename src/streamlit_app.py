@@ -46,7 +46,6 @@ header {visibility: hidden;}
 if "authenticated" not in st.session_state:
     st.session_state.authenticated = False
 
-# Read temporary pipeline token and immediately scrub URL string completely clear
 query_params = st.query_params
 if "auth_token" in query_params:
     if query_params["auth_token"] == "verified":
@@ -56,13 +55,11 @@ if "auth_token" in query_params:
 # Global Client-Side Storage Verification Bridge
 components.html("""
     <script>
-    // Automatically scrub query strings out of browser navigation bar on parent level
     if (window.parent.location.search.length > 0) {
         const cleanUrl = window.parent.location.protocol + "//" + window.parent.location.host + window.parent.location.pathname;
         window.parent.history.replaceState({}, document.title, cleanUrl);
     }
     
-    // Cross-refresh auto-login check
     const verified = localStorage.getItem("fa_ibi_auth");
     const sessionActive = sessionStorage.getItem("tab_session");
     
@@ -223,7 +220,7 @@ def run_ocr(uploaded_file) -> str:
         img = img.resize((int(w * scale), int(h * scale)), Image.LANCZOS)
     img = ImageOps.grayscale(img)
     img = ImageEnhance.Contrast(img).enhance(2.5) 
-    img = img.filter(ImageFilter.SHAPER)
+    img = img.filter(ImageFilter.SHARPEN)
     import numpy as np
     arr = np.array(img)
     hist, _ = np.histogram(arr.flatten(), 256, (0, 256))
@@ -319,34 +316,9 @@ def generate_contract(data: dict) -> bytes:
     cv.save(); buf.seek(0); return buf.getvalue()
 
 # ─────────────────────────────────────────────
-#  COOKIE LAYOUT MODAL & GATEPORTAL
+#  SECURITY LOCK Portal
 # ─────────────────────────────────────────────
 if not st.session_state.authenticated:
-    # Inject an absolute-positioned responsive UI cookie banner directly over the window layout
-    components.html("""
-        <style>
-        .cookie-box {
-            position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
-            width: 90%; max-width: 500px; background: #1e1e24; color: #ffffff;
-            padding: 20px; border-radius: 12px; box-shadow: 0px 8px 24px rgba(0,0,0,0.5);
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-            z-index: 999999; display: block; border: 1px solid #3a3a42;
-        }
-        if (localStorage.getItem("cookie_consent") === "accepted") { document.write('<style>.cookie-box{display:none;}</style>'); }
-        </style>
-        <div class="cookie-box" id="cookieModal">
-            <h4 style="margin:0 0 8px 0;font-size:16px;">🍪 Accept Workspace Cookies</h4>
-            <p style="margin:0 0 16px 0;font-size:13px;color:#b0b0b8;line-height:1.4;">We use localized caching to securely remember your access signature so you stay logged in dynamically upon refreshes.</p>
-            <button onclick="acceptCookies()" style="background:#248a3d;color:#fff;border:none;padding:8px 16px;border-radius:6px;font-weight:6px;cursor:pointer;width:100%;">Accept and Remember Session</button>
-        </div>
-        <script>
-        function acceptCookies() {
-            localStorage.setItem("cookie_consent", "accepted");
-            document.getElementById("cookieModal").style.display = "none";
-        }
-        </script>
-    """, height=120)
-
     st.subheader("🔐 System Security Verification")
     code = st.text_input("Access PIN", type="password", placeholder="Enter key…")
     if st.button("Verify Key"):
@@ -354,7 +326,6 @@ if not st.session_state.authenticated:
             st.session_state.authenticated = True
             components.html("""
                 <script>
-                localStorage.setItem("fa_ibi_auth", "true");
                 sessionStorage.setItem("tab_session", "active");
                 const currentUrl = new URL(window.parent.location.href);
                 currentUrl.searchParams.set("auth_token", "verified");
@@ -367,7 +338,46 @@ if not st.session_state.authenticated:
     st.stop()
 
 # ─────────────────────────────────────────────
-#  SECURED CORE USER APPLICATION WORKSPACE
+#  POST-AUTHENTICATION CLEAN COOKIE MODAL
+# ─────────────────────────────────────────────
+# This now triggers cleanly ONLY after a successful passcode login verification pass
+components.html("""
+    <script>
+    if (localStorage.getItem("cookie_consent") !== "accepted") {
+        const modal = window.parent.document.createElement("div");
+        modal.id = "cleanCookieModal";
+        modal.style.position = "fixed";
+        modal.style.top = "24px";
+        modal.style.left = "24px";
+        modal.style.width = "320px";
+        modal.style.backgroundColor = "#18181c";
+        modal.style.color = "#ffffff";
+        modal.style.padding = "16px";
+        modal.style.borderRadius = "8px";
+        modal.style.boxShadow = "0px 6px 20px rgba(0,0,0,0.4)";
+        modal.style.fontFamily = "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif";
+        modal.style.zIndex = "999999";
+        modal.style.border = "1px solid #2d2d34";
+        
+        modal.innerHTML = `
+            <h4 style="margin:0 0 6px 0;font-size:14px;font-weight:600;letter-spacing:-0.2px;">🍪 Cookie Session Cache</h4>
+            <p style="margin:0 0 12px 0;font-size:12px;color:#9ca3af;line-height:1.4;">Remember access privileges dynamically across manual window refreshes?</p>
+            <button id="acceptCookieBtn" style="background:#238636;color:#fff;border:none;padding:6px 12px;border-radius:4px;font-size:12px;font-weight:500;cursor:pointer;width:100%;transition:background 0.2s;">Accept & Remember Session</button>
+        `;
+        
+        window.parent.document.body.appendChild(modal);
+        
+        window.parent.document.getElementById("acceptCookieBtn").onclick = function() {
+            localStorage.setItem("cookie_consent", "accepted");
+            localStorage.setItem("fa_ibi_auth", "true");
+            modal.remove();
+        };
+    }
+    </script>
+""", height=0, width=0)
+
+# ─────────────────────────────────────────────
+#  SECURED MASTER WORKSPACE
 # ─────────────────────────────────────────────
 for k, v in dict(ocr_name="", ocr_licence="", ocr_address="", ocr_postcode="", ocr_dob="", ocr_expiry="", last_scan_id="", sel_reg="", sel_make="", sel_model="", scan_msg="", fleet_msg="", perm_pdf=None, contract_pdf=None, contract_no="", pending_contract=None).items():
     if k not in st.session_state: st.session_state[k] = v
