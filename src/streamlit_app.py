@@ -279,39 +279,40 @@ def generate_permission_letter(data: dict) -> bytes:
         c.drawString(54, y_text, l)
         y_text -= 15
         
-    c.drawString(54, y_text - 10, "We authorise and give permission to the following individual to use the vehicle for all private hire bookings")
-    c.drawString(54, y_text - 25, "from UBER, BOLT, OLA, FREE NOW app, WHEELY and other private hire operators.")
+    c.drawString(54, 442, "We authorise and give permission to the following individual to use the vehicle for all private hire bookings")
+    c.drawString(54, 426, "from UBER, BOLT, OLA, FREE NOW app, WHEELY and other private hire operators.")
     
-    labels_vals = [
-        ("Vehicle Registration", data["registration"]),
-        ("Make and Model",       data["make_model"]),
-        ("Driver Name",          data["driver_name"]),
-        ("Address",              data["address"]),
-        ("Driving Licence No",   data["license_no"])
-    ]
+    # Absolute Grid Engine Blueprint alignment coordinates mapping
+    c.drawString(54, 392, "Vehicle Registration :")
+    c.drawString(180, 392, data["registration"])
     
-    y_field = 385
-    c.setFont("Helvetica", 11)
-    for label, val in labels_vals:
-        c.drawString(54, y_field, f"{label} :")
-        if label == "Address":
-            addr_lines = simpleSplit(val, "Helvetica", 11, pw - 240)
-            y_sub = y_field
-            for al in addr_lines:
-                c.drawString(180, y_sub, al)
-                y_sub -= 14
-            y_field -= (14 * len(addr_lines) + 10)
-        else:
-            c.drawString(180, y_field, val)
-            y_field -= 28
-            
-    c.drawString(54, y_field - 10, "Hire start date. :")
-    c.drawString(180, y_field - 10, data["start_date"])
-    c.drawString(54, y_field - 26, "Hire end date    :")
-    c.drawString(180, y_field - 26, data["end_date"])
+    c.drawString(54, 370, "Make and Model :")
+    c.drawString(180, 370, data["make_model"])
     
-    c.drawString(54, y_field - 60, "Regards,")
-    if sig: c.drawImage(sig, 40, y_field - 165, width=280, height=115, mask="auto")
+    c.drawString(54, 348, "Driver Name :")
+    c.drawString(180, 348, data["driver_name"])
+    
+    c.drawString(54, 326, "Address :")
+    addr_lines = simpleSplit(data["address"], "Helvetica", 11, pw - 240)
+    if len(addr_lines) > 1:
+        c.drawString(180, 326, addr_lines[0])
+        c.drawString(180, 310, addr_lines[1])
+        
+        c.drawString(54, 282, "Driving Licence No :")
+        c.drawString(180, 282, data["license_no"])
+    else:
+        c.drawString(180, 326, data["address"])
+        
+        c.drawString(54, 300, "Driving Licence No :")
+        c.drawString(180, 300, data["license_no"])
+        
+    c.drawString(54, 256, "Hire start date. :")
+    c.drawString(180, 256, data["start_date"])
+    c.drawString(54, 238, "Hire end date    :")
+    c.drawString(180, 238, data["end_date"])
+    
+    c.drawString(54, 190, "Regards,")
+    if sig: c.drawImage(sig, 40, 85, width=280, height=115, mask="auto")
     
     c.save()
     buf.seek(0)
