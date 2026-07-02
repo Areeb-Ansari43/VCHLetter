@@ -272,47 +272,50 @@ def generate_permission_letter(data: dict) -> bytes:
     c.setFont("Helvetica", 11)
     c.drawString(54, 520, "To Whom It May Concern,")
     
+    # 24pt clean block padding cushion separation height line gaps 
     body_text = f"We confirm that the below vehicle can be used for the carriage of passengers for hire and reward by prior appointments (private hire) as specified on insurance policy: {data['insurance_policy']}"
     lines = simpleSplit(body_text, "Helvetica", 11, pw - 108)
-    y_text = 490
+    y_text = 482
     for l in lines:
         c.drawString(54, y_text, l)
         y_text -= 15
         
-    c.drawString(54, 442, "We authorise and give permission to the following individual to use the vehicle for all private hire bookings")
-    c.drawString(54, 426, "from UBER, BOLT, OLA, FREE NOW app, WHEELY and other private hire operators.")
+    c.drawString(54, 436, "We authorise and give permission to the following individual to use the vehicle for all private hire bookings")
+    c.drawString(54, 420, "from UBER, BOLT, OLA, FREE NOW app, WHEELY and other private hire operators.")
     
     # Absolute Grid Engine Blueprint alignment coordinates mapping
-    c.drawString(54, 392, "Vehicle Registration :")
-    c.drawString(180, 392, data["registration"])
+    c.drawString(54, 385, "Vehicle Registration :")
+    c.drawString(180, 385, data["registration"])
     
-    c.drawString(54, 370, "Make and Model :")
-    c.drawString(180, 370, data["make_model"])
+    c.drawString(54, 357, "Make and Model :")
+    c.drawString(180, 357, data["make_model"])
     
-    c.drawString(54, 348, "Driver Name :")
-    c.drawString(180, 348, data["driver_name"])
+    c.drawString(54, 329, "Driver Name :")
+    c.drawString(180, 329, data["driver_name"])
     
-    c.drawString(54, 326, "Address :")
+    c.drawString(54, 301, "Address :")
     addr_lines = simpleSplit(data["address"], "Helvetica", 11, pw - 240)
     if len(addr_lines) > 1:
-        c.drawString(180, 326, addr_lines[0])
-        c.drawString(180, 310, addr_lines[1])
+        c.drawString(180, 301, addr_lines[0])
+        c.drawString(180, 287, addr_lines[1])
         
-        c.drawString(54, 282, "Driving Licence No :")
-        c.drawString(180, 282, data["license_no"])
+        c.drawString(54, 259, "Driving Licence No :")
+        c.drawString(180, 259, data["license_no"])
+        y_next = 231
     else:
-        c.drawString(180, 326, data["address"])
+        c.drawString(180, 301, data["address"])
         
-        c.drawString(54, 300, "Driving Licence No :")
-        c.drawString(180, 300, data["license_no"])
+        c.drawString(54, 273, "Driving Licence No :")
+        c.drawString(180, 273, data["license_no"])
+        y_next = 245
         
-    c.drawString(54, 256, "Hire start date. :")
-    c.drawString(180, 256, data["start_date"])
-    c.drawString(54, 238, "Hire end date    :")
-    c.drawString(180, 238, data["end_date"])
+    c.drawString(54, y_next, "Hire start date. :")
+    c.drawString(180, y_next, data["start_date"])
+    c.drawString(54, y_next - 18, "Hire end date    :")
+    c.drawString(180, y_next - 18, data["end_date"])
     
-    c.drawString(54, 190, "Regards,")
-    if sig: c.drawImage(sig, 40, 85, width=280, height=115, mask="auto")
+    c.drawString(54, y_next - 60, "Regards,")
+    if sig: c.drawImage(sig, 40, y_next - 175, width=280, height=115, mask="auto")
     
     c.save()
     buf.seek(0)
