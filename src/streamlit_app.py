@@ -1,11 +1,11 @@
 import streamlit as st
 import os, re, io
+import streamlit.components.v1 as components
 from PIL import Image, ImageFilter, ImageOps, ImageEnhance
 from datetime import datetime, date
 from reportlab.lib.pagesizes import letter
 from reportlab.lib.utils import simpleSplit
 from reportlab.pdfgen import canvas
-from streamlit_cookies_manager import EncryptedCookiesManager
 
 try:
     import pytesseract
@@ -14,7 +14,6 @@ except ImportError:
 
 SRC_DIR = os.path.dirname(os.path.abspath(__file__))
 
-# Find Favicon Image dynamically
 def _find_img(base_name):
     for ext in [".jpg", ".png", ".jpeg", ".JPG", ".PNG"]:
         p = os.path.join(SRC_DIR, base_name + ext)
@@ -32,28 +31,41 @@ st.set_page_config(
     layout="centered"
 )
 
-hide_st_style = """
+st.markdown("""
 <style>
 #MainMenu {visibility: hidden;}
 footer {visibility: hidden;}
 header {visibility: hidden;}
 [data-testid="stToolbar"] {visibility: hidden !important;}
 </style>
-"""
-st.markdown(hide_st_style, unsafe_allow_html=True)
+""", unsafe_allow_html=True)
 
 # ─────────────────────────────────────────────
-#  COOKIE MANAGEMENT SYSTEM
+#  NATIVE LOCALSTORAGE PERSISTENCE DRIVER
 # ─────────────────────────────────────────────
-# Initialize the secure browser cookie storage driver
-# Change the password to any secure 16+ char random string of your choosing
-cookies = EncryptedCookiesManager(
-    prefix="fa_ibi/auth/",
-    password=st.secrets.get("COOKIE_PASSWORD", "SuperSecretSecurePassword321!")
-)
+if "authenticated" not in st.session_state:
+    st.session_state.authenticated = False
 
-if not cookies.ready():
-    st.stop()  # Wait until the browser completes the asynchronous cookie handshake
+# Read temporary routing token from hidden token catch
+query_params = st.query_params
+if "auth_token" in query_params:
+    if query_params["auth_token"] == "verified":
+        st.session_state.authenticated = True
+    # Immediately scrub the URL query string to keep it clean
+    st.query_params.clear()
+
+# Inject JavaScript to handle browser side cross-session survival
+if not st.session_state.authenticated:
+    components.html("""
+        <script>
+        const verified = localStorage.getItem("fa_ibi_auth");
+        if (verified === "true") {
+            const url = new URL(window.parent.location.href);
+            url.searchParams.set("auth_token", "verified");
+            window.parent.location.href = url.toString();
+        }
+        </script>
+    """, height=0, width=0)
 
 FLEET_VEHICLES = [
     {"reg": "AF70 MYK", "model": "TESLA MODEL 3"},
@@ -377,27 +389,31 @@ def generate_contract(data: dict) -> bytes:
     cv.save(); buf.seek(0); return buf.getvalue()
 
 # ─────────────────────────────────────────────
-#  AUTHENTICATION CORE (SECURE BROWSER COOKIES)
+#  GATING SYSTEM (NATIVE PERSISTENCE VIEW)
 # ─────────────────────────────────────────────
-is_authenticated = cookies.get("session_verified") == "true"
-
-if not is_authenticated:
-    # Render minimalist auth lock layout without address parameters exposed
+if not st.session_state.authenticated:
     st.subheader("🔐 System Security Verification")
     code = st.text_input("Access PIN", type="password", placeholder="Enter key…")
     if st.button("Verify Key"):
         if code == st.secrets.get("ACCESS_KEY", ""):
-            cookies["session_verified"] = "true"
-            cookies.save()  # Save encrypted browser cookie state
+            st.session_state.authenticated = True
+            # Embed token check into LocalStorage natively via clean script line tracking
+            components.html("""
+                <script>
+                localStorage.setItem("fa_ibi_auth", "true");
+                const url = new URL(window.parent.location.href);
+                url.searchParams.set("auth_token", "verified");
+                window.parent.location.href = url.toString();
+                </script>
+            """, height=0, width=0)
             st.rerun()
         else:
             st.error("Invalid Security Verification Pin Code")
     st.stop()
 
 # ─────────────────────────────────────────────
-#  APPLICATION CORE WORKSPACE
+#  WORKSPACE LAYOUT ENGINE
 # ─────────────────────────────────────────────
-# Initialize core system states safely
 for k, v in dict(
     ocr_name="", ocr_licence="", ocr_address="", ocr_postcode="",
     ocr_dob="", ocr_expiry="", last_scan_id="",
@@ -408,7 +424,7 @@ for k, v in dict(
 ).items():
     if k not in st.session_state: st.session_state[k] = v
 
-# SHARED AUTOMATION CONTROL PANEL
+# DATA PANEL
 st.markdown("### 🎛️ Shared Data Automation Panel")
 if st.session_state.scan_msg:  st.success(st.session_state.scan_msg)
 if st.session_state.fleet_msg: st.info(st.session_state.fleet_msg)
