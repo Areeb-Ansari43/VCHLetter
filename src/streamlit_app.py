@@ -134,9 +134,10 @@ def strip_address_noise(s: str) -> str:
     s = re.sub(r"UNITED\s+\w*\s*KINGDOM", "", s)
     s = re.sub(r"\b(ENGLAND|SCOTLAND|WALES|NORTHERN\s+IRELAND)\b", "", s)
     s = re.sub(r"\bDVLA\b|\bDVLNI\b", "", s)
+    # Remove fragments of stray dates or layout reference indices
+    s = re.sub(r"\b\d{1,2}\s+\d{1,2}\s+\d{2,4}\b", " ", s)
+    s = re.sub(r"\b\d{6,}\b", " ", s)
     s = re.sub(r"\b[1-9][ABCDE58]?\.?\s*", " ", s) 
-    s = re.sub(r"\b(19|20)\d{2}\b", " ", s)
-    s = re.sub(r"[A-Z]{5}\d{6}[A-Z0-9]{4,8}", " ", s)
     s = re.sub(r"[^A-Z0-9 ,'\-]", " ", s)
     s = re.sub(r"\s+", " ", s).strip().strip(",").strip()
     return s
@@ -154,7 +155,7 @@ def _grab(blob, start_pats, end_pats):
     return ""
 
 # ─────────────────────────────────────────────
-#  OCR CORE ENGINE 
+#  OCR CORE SCAN ENGINE
 # ─────────────────────────────────────────────
 def run_ocr(uploaded_file) -> str:
     img = Image.open(uploaded_file).convert("RGB")
@@ -211,16 +212,18 @@ def parse_licence(raw: str) -> dict:
         m = re.search(r"4[Bb]\.?\s*(\d{1,2}[./\-]\d{1,2}[./\-]\d{2,4})", blob)
         if m: expiry = normalize_date(m.group(1))
 
-    # 5. Licence Number (Supports custom ANDE012345678 and official structures)
+    # 5. Licence Number
     licence = ""
-    raw_5 = _grab(blob, [r"5\."], [r"6\.", r"7\."])
-    if raw_5:
-        licence = re.sub(r"[^A-Z0-9]", "", raw_5.split()[0])
-    if not licence or len(licence) < 5:
-        m = re.search(r"5\.\s*([A-Z0-9]{5,18})", blob)
-        if m: licence = m.group(1).strip()
+    clean_strip = re.sub(r"\s", "", blob)
+    # Search for standard UK driving licence template signature blocks
+    lic_match = re.search(r"5\.?([A-Z9]{5}\d{6}[A-Z9]{2}[A-Z0-9]{3,5})", clean_strip)
+    if lic_match:
+        licence = lic_match.group(1)[:16]
+    if not licence:
+        m = re.search(r"5\.\s*([A-Z0-9\-]{5,20})", blob)
+        if m: licence = re.sub(r"[^A-Z0-9]", "", m.group(1))
 
-    # 8. Address Separation Block
+    # 8. Address Separation Logic
     raw_8 = _grab(blob, [r"8\."], [r"9\."])
     if not raw_8:
         m = re.search(r"8\.\s*(.*?)(?=\s*9\.)", blob, re.DOTALL)
@@ -229,13 +232,15 @@ def parse_licence(raw: str) -> dict:
     address_block = raw_8 if raw_8 else blob
     postcode = extract_postcode(address_block)
     
-    # Clean noise away explicitly from Address string context
+    # Process address text segments to clear line pollution
     addr_clean = strip_address_noise(address_block)
     if postcode:
         addr_clean = re.sub(re.escape(postcode), "", addr_clean, flags=re.I)
     
-    # Eliminate leading field tags from the final text view box
-    addr_clean = re.sub(r"^[0-9]\.?\s*", "", addr_clean.strip()).strip(", ").strip()
+    # Remove leading row/index remnants
+    addr_clean = re.sub(r"^[0-9A-Z]{1,2}\b\.?\s*", "", addr_clean.strip()).strip(", ").strip()
+    # Strip any broken prefix digits that look like scanner bleeding fragments
+    addr_clean = re.sub(r"^\d{2,}\s+", "", addr_clean).strip()
 
     return {
         "surname": surname, "forename": forename,
@@ -245,7 +250,7 @@ def parse_licence(raw: str) -> dict:
     }
 
 # ─────────────────────────────────────────────
-#  PDF GENERATION ENGINE (Restored Coordinate Set)
+#  PDF GENERATION ENGINE
 # ─────────────────────────────────────────────
 def _find_img(base_name):
     for ext in [".jpg", ".png", ".jpeg", ".JPG", ".PNG"]:
@@ -286,8 +291,7 @@ def generate_permission_letter(data: dict) -> bytes:
     c.drawString(54, 260, "Hire end date    :"); c.drawString(160, 260, data["end_date"])
     c.drawString(54, 220, "Regards,")
     
-    if os.path.exists(sig) if sig else False: 
-        c.drawImage(sig, 40, 120, width=280, height=115, mask="auto")
+    if sig: c.drawImage(sig, 40, 120, width=280, height=115, mask="auto")
     c.drawString(54, 115, "Muhammad Sohail Qureshi")
     c.drawString(54, 100, "Director (FA-IBI LTD)")
     c.save(); buf.seek(0); return buf.getvalue()
@@ -300,54 +304,54 @@ def generate_contract(data: dict) -> bytes:
     bg1 = _find_img("1")
     bg2 = _find_img("2")
 
-    # PAGE 1 Background Setup
+    # ──── PAGE 1 ────
     if bg1: cv.drawImage(bg1, 0, 0, width=W, height=H)
     
     cv.setFont("Helvetica-Bold", 9)
-    cv.drawString(312, 712, data.get("contract_no", ""))
-    cv.drawString(510, 712, data.get("date", ""))
+    cv.drawString(395, 714, data.get("contract_no", ""))
+    cv.drawString(530, 714, data.get("date", ""))
     
-    # Offset coordinates mapped directly over form line regions
+    # Adjusted form baselines to clear line borders perfectly
     cv.setFont("Helvetica", 8)
-    cv.drawString(115, 665, data.get("driver_name", ""))
-    cv.drawString(465, 665, data.get("dob", ""))
-    cv.drawString(115, 641, data.get("address", ""))
-    cv.drawString(455, 641, data.get("postcode", ""))
-    cv.drawString(115, 618, data.get("license_no", ""))
-    cv.drawString(290, 618, data.get("issuing_authority", ""))
-    cv.drawString(485, 618, data.get("expiry_date", ""))
-    cv.drawString(115, 594, data.get("phone", ""))
-    cv.drawString(260, 594, data.get("email", ""))
+    cv.drawString(120, 650, data.get("driver_name", ""))
+    cv.drawString(465, 650, data.get("dob", ""))
+    cv.drawString(120, 628, data.get("address", ""))
+    cv.drawString(455, 628, data.get("postcode", ""))
+    cv.drawString(120, 606, data.get("license_no", ""))
+    cv.drawString(290, 606, data.get("issuing_authority", ""))
+    cv.drawString(485, 606, data.get("expiry_date", ""))
+    cv.drawString(120, 584, data.get("phone", ""))
+    cv.drawString(260, 584, data.get("email", ""))
 
-    # Financial Parameter Strings
+    # Financial Field Mappings
     cv.setFont("Helvetica-Bold", 9)
-    cv.drawString(125, 516, data.get("rent", ""))
-    cv.drawString(145, 462, data.get("rate", ""))
-    cv.drawString(125, 396, data.get("deposit", ""))
+    cv.drawString(130, 478, data.get("rent", ""))
+    cv.drawString(145, 440, data.get("rate", ""))
+    cv.drawString(130, 386, data.get("deposit", ""))
 
-    # Hire Duration Strings
+    # Contract Active Term Dates
     cv.setFont("Helvetica", 8)
-    cv.drawString(125, 268, data.get("start_date", ""))
-    cv.drawString(210, 252, data.get("expected_return", ""))
+    cv.drawString(130, 310, data.get("start_date", ""))
+    cv.drawString(215, 294, data.get("expected_return", ""))
 
-    # Vehicle Parameter Strings
+    # Vehicle Spec Field Lines
     cv.setFont("Helvetica-Bold", 8.5)
-    cv.drawString(80, 166, data.get("car_make", ""))
-    cv.drawString(285, 166, data.get("registration", ""))
-    cv.drawString(460, 166, data.get("car_model", ""))
+    cv.drawString(85, 133, data.get("car_make", ""))
+    cv.drawString(290, 133, data.get("registration", ""))
+    cv.drawString(465, 133, data.get("car_model", ""))
 
-    # PAGE 2 Background Setup
+    # ──── PAGE 2 ────
     cv.showPage()
     if bg2: cv.drawImage(bg2, 0, 0, width=W, height=H)
         
     cv.setFont("Helvetica-Bold", 9)
-    cv.drawString(145, 713, data.get("contract_no", ""))
-    cv.drawString(390, 713, data.get("registration", ""))
+    cv.drawString(145, 715, data.get("contract_no", ""))
+    cv.drawString(390, 715, data.get("registration", ""))
 
     cv.save(); buf.seek(0); return buf.getvalue()
 
 # ─────────────────────────────────────────────
-#  STREAMLIT APPLICATION RENDERING ENGINE
+#  STREAMLIT UI ENGINE
 # ─────────────────────────────────────────────
 st.set_page_config(page_title="FA-IBI Workspace", layout="centered")
 st.markdown("<style>#MainMenu,footer,header,[data-testid='stToolbar']{display:none!important;}</style>", unsafe_allow_html=True)
@@ -361,7 +365,6 @@ if not st.session_state.authenticated:
         st.query_params["session"] = "active"; st.rerun()
     else: st.stop()
 
-# Initialize State Keys with explicitly bound active tab controller
 for k, v in dict(
     ocr_name="", ocr_licence="", ocr_address="", ocr_postcode="",
     ocr_dob="", ocr_expiry="", last_scan_id="",
@@ -374,7 +377,7 @@ for k, v in dict(
 
 st.title("FA-IBI Master Document Workspace")
 
-# GLOBAL DATA AUTOMATION PANEL
+# SHARED AUTOMATION CONTROL
 st.markdown("### 🎛️ Shared Data Automation Panel")
 if st.session_state.scan_msg:  st.success(st.session_state.scan_msg)
 if st.session_state.fleet_msg: st.info(st.session_state.fleet_msg)
@@ -416,7 +419,7 @@ with col_fleet:
                 mk, mo = split_make_model(car["model"])
                 st.session_state.sel_reg = car["reg"]
                 st.session_state.sel_make = mk; st.session_state.sel_model = mo
-                st.session_state.fleet_msg = f"✅ Vehicle fields sync verified!"; st.rerun()
+                st.session_state.fleet_msg = f"✅ Fleet specs synchronized!"; st.rerun()
     else:
         if st.session_state.sel_reg:
             st.session_state.sel_reg = st.session_state.sel_make = st.session_state.sel_model = ""
@@ -433,17 +436,9 @@ if st.session_state.pending_contract:
     finally:
         st.session_state.pending_contract = None
 
-# Tab controller callbacks to preserve current selection index view
-def set_active_tab(tab_index):
-    st.session_state.current_tab = tab_index
-
 tab1, tab2 = st.tabs(["📝 Permission Letter", "📜 Contract Generator"])
 
 with tab1:
-    # Trigger active index capture context
-    if st.session_state.current_tab != 0:
-        set_active_tab(0)
-        
     with st.form("perm_form"):
         c1, c2 = st.columns(2)
         with c1:
@@ -472,10 +467,6 @@ with tab1:
         st.download_button("📥 Download Permission Letter PDF", data=st.session_state.perm_pdf, file_name="Permission_Letter.pdf", mime="application/pdf", key="dl_perm_btn")
 
 with tab2:
-    # Trigger active index capture context
-    if st.session_state.current_tab != 1:
-        set_active_tab(1)
-
     if st.session_state.contract_pdf:
         st.success(f"🎉 Contract PDF Created Successfully!")
         st.download_button("📥 Download Generated Contract PDF", data=st.session_state.contract_pdf, file_name=f"Contract_{st.session_state.contract_no}.pdf", mime="application/pdf", key="dl_contract_btn")
