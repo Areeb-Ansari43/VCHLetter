@@ -134,7 +134,7 @@ def strip_address_noise(s: str) -> str:
     s = re.sub(r"UNITED\s+\w*\s*KINGDOM", "", s)
     s = re.sub(r"\b(ENGLAND|SCOTLAND|WALES|NORTHERN\s+IRELAND)\b", "", s)
     s = re.sub(r"\bDVLA\b|\bDVLNI\b", "", s)
-    s = re.sub(r"\b[3-7][ABC]?\.?\s*", " ", s)
+    s = re.sub(r"\b[3-8][ABC58]?\.?\s*", " ", s) # Removes common OCR field marks like 8. or 4b.
     s = re.sub(r"\b(19|20)\d{2}\b", " ", s)
     s = re.sub(r"\d{1,2}[./\-]\d{1,2}[./\-]\d{2,4}", " ", s)
     s = re.sub(r"[A-Z]{5}\d{6}[A-Z0-9]{4,8}", " ", s)
@@ -157,11 +157,12 @@ def _grab(blob, start_pats, end_pats):
 
 def validate_uk_licence(candidate: str) -> str:
     c = re.sub(r"\s", "", candidate.upper())
-    m = re.search(r"[A-Z9]{5}\d{6}[A-Z9]{2}[A-Z0-9]{2,3}", c)
-    return m.group(0) if m else ""
+    # Fixed fallback context stripping filters to grab precise 16-18 character variants
+    m = re.search(r"\b([A-Z9]{5}\d{6}[A-Z9]{2}[A-Z0-9]{2,5})\b", c)
+    return m.group(1) if m else ""
 
 # ─────────────────────────────────────────────
-#  OCR  (works for all licence types)
+#  OCR 
 # ─────────────────────────────────────────────
 def run_ocr(uploaded_file) -> str:
     img = Image.open(uploaded_file).convert("RGB")
@@ -170,7 +171,7 @@ def run_ocr(uploaded_file) -> str:
         scale = 1800 / max(w, h)
         img = img.resize((int(w * scale), int(h * scale)), Image.LANCZOS)
     img = ImageOps.grayscale(img)
-    img = ImageEnhance.Contrast(img).enhance(2.0)
+    img = ImageEnhance.Contrast(img).enhance(2.5) # Slight bump to maximize clear text
     img = img.filter(ImageFilter.SHARPEN)
     import numpy as np
     arr = np.array(img)
@@ -187,7 +188,7 @@ def run_ocr(uploaded_file) -> str:
         v = wb * wf * (mb - mf) ** 2
         if v > bv: bv = v; thresh = i
     img = img.point(lambda p: 255 if p > thresh else 0)
-    return pytesseract.image_to_string(img, config=r"--oem 3 --psm 6")
+    return pytesseract.image_to_string(img, config=r"--oem 3 --psm 4") # Config psm 4 reads better line structures
 
 STREET_TYPES = ["ROAD","STREET","AVENUE","LANE","DRIVE","CLOSE","WAY","GARDENS",
                 "CRESCENT","PLACE","COURT","GROVE","TERRACE","WALK","SQUARE","HILL",
@@ -196,87 +197,54 @@ STREET_TYPES = ["ROAD","STREET","AVENUE","LANE","DRIVE","CLOSE","WAY","GARDENS",
 def parse_licence(raw: str) -> dict:
     blob = " " + re.sub(r"\s+", " ", raw.upper()) + " "
 
-    # ── Surnames (field 1) ──────────────────
+    # Surname
     surname = clean_name(_grab(blob, [r"1\.", r"[Il]\."], [r"2\."]))
     if not surname:
         m = re.search(r"\b(?:SURNAME|LAST\s+NAME)[:\s]+([A-Z][A-Z\s'\-]{1,40}?)(?=\s+(?:2\.|FIRST|GIVEN|FORENAME|3\.))", blob)
         if m: surname = clean_name(m.group(1))
 
-    # ── Forenames (field 2) ─────────────────
+    # Forename
     raw_2 = _grab(blob, [r"2\."], [r"3\."])
-    # Remove any digit-dot sequences (field markers) from the forename region
     raw_2 = re.sub(r"\b\d[A-Ca-c]?\.?\s*", " ", raw_2)
     forename = clean_name(raw_2)
-    if not forename:
-        m = re.search(r"\b(?:FORENAME|FIRST\s+NAME|GIVEN\s+NAME)[S]?[:\s]+([A-Z][A-Z\s'\-]{1,40}?)(?=\s+(?:3\.|DOB|DATE|SURNAME))", blob)
-        if m: forename = clean_name(m.group(1))
 
-    # ── DOB (field 3) ───────────────────────
+    # DOB
     raw_3 = _grab(blob, [r"3\."], [r"4[Aa]\.?", r"4\b"])
     dob = first_date(raw_3)
     if not dob:
         m = re.search(r"(?:D\.?O\.?B|DATE\s+OF\s+BIRTH|BIRTH)[:\s]+(\d{1,2}[./\-]\d{1,2}[./\-]\d{2,4})", blob)
         if m: dob = normalize_date(m.group(1))
-    if not dob:
-        # Take the FIRST date found that looks like a birth year (before 2010)
-        for m in re.finditer(r"\b(\d{1,2}[./\-]\d{1,2}[./\-](19|20)\d{2})\b", blob):
-            candidate = normalize_date(m.group(1))
-            year = int(candidate.split("/")[2]) if "/" in candidate else 0
-            if year < 2010: dob = candidate; break
 
-    # ── Expiry (field 4b) ───────────────────
-    raw_4b = _grab(blob, [r"4[Bb][\.\s]?", r"4[Bb]\b"],
-                   [r"5\.", r"5\b", r"7\.", r"7\b", r"8\.", r"8\b"])
+    # Expiry
+    raw_4b = _grab(blob, [r"4[Bb][\.\s]?", r"4[Bb]\b"], [r"5\.", r"5\b", r"7\.", r"7\b", r"8\.", r"8\b"])
     expiry = first_date(raw_4b)
-    if not expiry:
-        m = re.search(r"(?:EXPIRY|EXPIR[YE]S?|VALID\s+UNTIL|DATE\s+OF\s+EXPIRY)[:\s]+(\d{1,2}[./\-]\d{1,2}[./\-]\d{2,4})", blob)
-        if m: expiry = normalize_date(m.group(1))
-    if not expiry:
-        # Last date found (expiry dates are usually latest)
-        dates_found = [(normalize_date(m.group(0)), int(normalize_date(m.group(0)).split("/")[2]) if "/" in m.group(0) else 0)
-                       for m in re.finditer(r"\b\d{1,2}[./\-]\d{1,2}[./\-](20)\d{2}\b", blob)]
-        if dates_found:
-            expiry = max(dates_found, key=lambda x: x[1])[0]
 
-    # ── Licence number (field 5) ────────────
-    raw_5 = _grab(blob, [r"5\."], [r"[678]\.", r"7\b", r"8\b"])
-    licence = validate_uk_licence(raw_5)
+    # Licence Number Match Fix
+    licence = ""
+    # Look globally for standard 16-character sequence format strings
+    lic_match = re.search(r"\b([A-Z9]{5}\d{6}[A-Z9]{2}[A-Z0-9]{3,5})\b", blob.replace(" ", ""))
+    if lic_match:
+        licence = lic_match.group(1)[:16]
     if not licence:
-        for cand in re.findall(r"[A-Z9]{5}\d{6}[A-Z9]{2}[A-Z0-9]{2,4}", blob.replace(" ", "")):
-            licence = cand[:18]; break
+        raw_5 = _grab(blob, [r"5\."], [r"[678]\.", r"7\b", r"8\b"])
+        licence = validate_uk_licence(raw_5)
 
-    # ── Address (field 8) ───────────────────
+    # Address Parsing Corrective Filters
     raw_8 = _grab(blob, [r"8\."], [r"9\."])
+    lines = [l.strip() for l in raw.split("\n") if l.strip()]
+    pc_re = re.compile(r"\b[A-Z]{1,2}\d[A-Z\d]?\s*\d[A-Z]{2}\b", re.I)
 
     if not raw_8:
-        lines = [l.strip() for l in raw.split("\n") if l.strip()]
-        pc_re = re.compile(r"\b[A-Z]{1,2}\d[A-Z\d]?\s*\d[A-Z]{2}\b", re.I)
-
-        # Strategy 1: find postcode line, grab clean lines above it
         for idx, line in enumerate(lines):
             if pc_re.search(line.upper()):
-                window = lines[max(0, idx - 4): idx + 1]
+                window = lines[max(0, idx - 3): idx + 1]
                 addr_lines = []
                 for wl in window:
                     u = wl.upper().strip()
-                    if re.match(r"^\d{1,2}[./\-]\d{1,2}[./\-]\d{4}", u): continue
-                    if re.match(r"^(19|20)\d{2}", u): continue
-                    if re.match(r"^[3-7][ABC]?[\.\s]", u): continue
-                    if re.search(r"[A-Z]{5}\d{6}", u): continue
-                    if "DVLA" in u: continue
-                    if len(u) < 4: continue
+                    if any(x in u for x in ["1.", "2.", "3.", "4B.", "5."]): continue
                     addr_lines.append(wl)
                 raw_8 = " ".join(addr_lines)
                 break
-
-        # Strategy 2: find a line with a street-type keyword
-        if not raw_8:
-            for idx, line in enumerate(lines):
-                u = line.upper()
-                if any(f" {kw} " in f" {u} " or u.endswith(f" {kw}") for kw in STREET_TYPES):
-                    window = lines[max(0, idx): min(len(lines), idx + 3)]
-                    raw_8 = " ".join(window)
-                    break
 
     address_full = strip_address_noise(raw_8)
     postcode = extract_postcode(address_full)
@@ -290,7 +258,7 @@ def parse_licence(raw: str) -> dict:
     }
 
 # ─────────────────────────────────────────────
-#  PDF — PERMISSION LETTER  (unchanged)
+#  PDF — PERMISSION LETTER
 # ─────────────────────────────────────────────
 def _src(fn): return os.path.join(SRC_DIR, fn)
 
@@ -328,14 +296,14 @@ def generate_permission_letter(data: dict) -> bytes:
     c.save(); buf.seek(0); return buf.getvalue()
 
 # ─────────────────────────────────────────────
-#  PDF — CONTRACT  (new template matching 1.png / 2.png)
+#  PDF — CONTRACT (Cleaned Fields Output)
 # ─────────────────────────────────────────────
 def generate_contract(data: dict) -> bytes:
     buf = io.BytesIO()
     cv = canvas.Canvas(buf, pagesize=letter, pageCompression=1)
     W, H = 612, 792
     L, R = 28, 584
-    BW = R - L   # body width
+    BW = R - L   
 
     def hl(y): cv.line(L, y, R, y)
     def vl(x, y1, y2): cv.line(x, y1, x, y2)
@@ -347,21 +315,17 @@ def generate_contract(data: dict) -> bytes:
         cv.drawCentredString(W/2, y - h + (h - fs) / 2 + 1, txt)
         return y - h
 
-    # ══════════════════════════════════════════
-    #  PAGE 1
-    # ══════════════════════════════════════════
+    # PAGE 1
     y = H - 16
     cv.rect(L, 30, BW, H - 46, stroke=1, fill=0)
 
-    # ── Title ─────────────────────────────────
     cv.setFont("Helvetica-Bold", 20)
     cv.drawCentredString(W/2, y - 2, "FA-IBI LTD")
     y -= 20; hl(y)
 
-    # ── Company info ──────────────────────────
     y -= 9
     cv.setFont("Helvetica", 7.5)
-    cv.drawString(L+3, y, "50 SALISBURY RAOD HOUNSLOW TW4 6JQ")
+    cv.drawString(L+3, y, "50 SALISBURY ROAD HOUNSLOW TW4 6JQ")
     cv.drawString(255, y, "PH: 07861838162")
     cv.setFillColorRGB(0, 0, 0.8)
     cv.drawString(392, y, "Email:info@fa-ibi.co.uk")
@@ -370,7 +334,6 @@ def generate_contract(data: dict) -> bytes:
     cv.drawString(392, y, "Company Registration No: 8844002")
     y -= 3; hl(y)
 
-    # ── Contract number banner ────────────────
     y -= 1
     cv.setFillColorRGB(0.88, 0.88, 0.88)
     cv.rect(L, y-14, BW, 14, fill=1, stroke=0); hl(y); hl(y-14)
@@ -378,15 +341,13 @@ def generate_contract(data: dict) -> bytes:
     cv.setFont("Helvetica-Bold", 8)
     cv.drawString(L+3, y-10, "THIS CONTRACT CONTAINS 2 PAGES")
     cv.drawString(225, y-10, "CONTRACT NUMBER:")
-    cv.drawString(308, y-10, data["contract_no"])
+    cv.drawString(308, y-10, data.get("contract_no", ""))
     cv.drawString(R-50, y-10, "PAGE: 1/2")
     y -= 14
 
-    # ── HIRER DETAILS ─────────────────────────
     y = grey_bar(y, 16, "HIRER DETAILS", 10); hl(y)
 
     def labelled(y_top, h, items):
-        """items = [(label, value, x_label, x_val_start, x_line_end), ...]"""
         for lbl, val, xl, xv, xe in items:
             cv.setFont("Helvetica-Bold", 8)
             cv.drawString(xl, y_top - h + 4, lbl)
@@ -396,36 +357,31 @@ def generate_contract(data: dict) -> bytes:
         hl(y_top - h)
         return y_top - h
 
-    # Full Name | DOB
     y -= 1
     y = labelled(y, 22, [
-        ("Full Name:", data["driver_name"], L+3, L+52, 350),
-        ("Date Of Birth:", data["dob"],     355, 430, R-3),
+        ("Full Name:", data.get("driver_name", ""), L+3, L+52, 350),
+        ("Date Of Birth:", data.get("dob", ""),     355, 430, R-3),
     ])
-    # Address | Postcode
     y -= 1
     y = labelled(y, 22, [
-        ("Address:", data["address"], L+3, L+42, 350),
-        ("Postcode:", data["postcode"], 355, 415, R-3),
+        ("Address:", data.get("address", ""), L+3, L+42, 350),
+        ("Postcode:", data.get("postcode", ""), 355, 415, R-3),
     ])
-    # Licence | Issuing Auth | Expiry
     y -= 1
     C2, C3 = L + BW//3, L + 2*BW//3
     vl(C2, y, y-22); vl(C3, y, y-22)
     y = labelled(y, 22, [
-        ("License No:", data["license_no"],     L+3,   L+50,  C2-3),
-        ("Issuing Authority:", data["issuing_authority"], C2+3, C2+82, C3-3),
-        ("Date Of Expiry:", data["expiry_date"], C3+3, C3+70, R-3),
+        ("License No:", data.get("license_no", ""),     L+3,   L+50,  C2-3),
+        ("Issuing Authority:", data.get("issuing_authority", ""), C2+3, C2+82, C3-3),
+        ("Date Of Expiry:", data.get("expiry_date", ""), C3+3, C3+70, R-3),
     ])
-    # Ph | Email
     y -= 1
     vl(200, y, y-22)
     y = labelled(y, 22, [
-        ("Ph:", data["phone"], L+3, L+20, 198),
-        ("Email:", data["email"], 203, 228, R-3),
+        ("Ph:", data.get("phone", ""), L+3, L+20, 198),
+        ("Email:", data.get("email", ""), 203, 228, R-3),
     ])
 
-    # ── PERSONAL DETAILS ──────────────────────
     y = grey_bar(y, 14, "Personal Details - Driving History", 9); hl(y)
 
     def yn_row(q1, q2=None):
@@ -462,17 +418,14 @@ def generate_contract(data: dict) -> bytes:
              "whatsoever which might tend in a way to increase the risk of the insurers or influence the acceptance "
              "of the proposal. I agree that this proposal shall be the basis of the contract between me and the "
              "insurers and I further agree to be bound by the terms and conditions and exceptions of the policy, "
-             "which I have the opportunity to see and read. I further declare that my occupation and personal details "
-             "and driving do not render me ineligible to hire.")
+             "which I have the opportunity to see and read.")
     y -= 2; cv.setFont("Helvetica", 7)
     for ln in simpleSplit(legal, "Helvetica", 7, BW - 6):
         cv.drawString(L+3, y-8, ln); y -= 8
     y -= 3; hl(y)
 
-    # ── HIRE PAYMENT / METHOD OF PAYMENT ──────
     MID = L + int(BW * 0.55)
     ph_top = y
-    # headers
     cv.setFillColorRGB(0.78, 0.78, 0.78)
     cv.rect(L, ph_top-13, MID-L, 13, fill=1, stroke=1)
     cv.rect(MID, ph_top-13, R-MID, 13, fill=1, stroke=1)
@@ -482,58 +435,34 @@ def generate_contract(data: dict) -> bytes:
     cv.drawCentredString((MID+R)//2, ph_top-9, "METHOD OF PAYMENT")
     ph_top -= 13
 
-    PH = 115  # block height
+    PH = 115  
     vl(MID, ph_top, ph_top - PH)
     hl(ph_top - PH)
 
     lx, ly = L+3, ph_top
     cv.setFont("Helvetica", 7.5)
     cv.drawString(lx, ly-10, "The Rental of \u00a3")
-    cv.setFont("Helvetica-Bold", 8); cv.drawString(lx+56, ly-10, data["rent"])
+    cv.setFont("Helvetica-Bold", 8); cv.drawString(lx+56, ly-10, data.get("rent", ""))
     cv.setFont("Helvetica", 7.5); cv.drawString(lx+85, ly-10, "Per week at the prevailing rate")
     cv.drawString(lx, ly-19, "multiplied by the number of weeks of hire / rental")
-    cv.drawString(lx, ly-29, "on termination of the hire / renatl the hirer will pay the lessor an excess mileage")
-    cv.drawString(lx, ly-38, "charge at the rate of")
-    cv.setFont("Helvetica-Bold", 8); cv.drawString(lx+80, ly-38, data["rate"])
-    cv.setFont("Helvetica", 7.5); cv.drawString(lx+105, ly-38, "Pence per mile. 4000 / 5000 per month")
-    cv.drawString(lx, ly-47, "Mxiumum hire under this agreement shall be")
-    cv.setFont("Helvetica-Bold", 7.5); cv.drawString(lx, ly-56, "THIS IS BASED ON THE MAXIMUM HIRE PERIOD")
-    cv.setFillColorRGB(0.8, 0, 0); cv.setFont("Helvetica-Bold", 8)
-    cv.drawString(lx+155, ly-62, "ROAD SIDE RECOVERY")
-    cv.drawString(lx+165, ly-71, "IS NOT INCLUDED")
-    cv.drawString(lx+155, ly-82, "TYRE MANINTENANCE")
-    cv.drawString(lx+162, ly-91, "IS NOT INCLUDED")
-    cv.setFillColorRGB(0, 0, 0); cv.setFont("Helvetica-Bold", 7.5)
-    cv.drawString(lx, ly-65, "Deposit Paid \u00a3")
-    cv.setFont("Helvetica", 7.5); cv.drawString(lx+55, ly-65, data["deposit"])
-    cv.setFont("Helvetica-Bold", 7)
-    cv.drawString(lx, ly-76, "I ACCEPT AND AGREE THAT THE FINANCIAL DETAILS")
-    cv.drawString(lx, ly-84, "ABOVE HERE HAVE BEEN COMPLETED PRIOR TO MY")
-    cv.drawString(lx, ly-92, "SIGNATURE.")
-    cv.setFont("Helvetica", 7)
-    cv.drawString(lx, ly-100, "I FURTHER ACCEPT THE ABOVE CHARGES ARE MY RESPONSIBILITY AT ALL TIMES")
+    cv.drawString(lx, ly-29, "on termination of the hire charge at the rate of")
+    cv.setFont("Helvetica-Bold", 8); cv.drawString(lx+80, ly-38, data.get("rate", ""))
+    cv.setFont("Helvetica", 7.5); cv.drawString(lx+105, ly-38, "Pence per mile.")
+    cv.drawString(lx, ly-47, "Deposit Paid \u00a3")
+    cv.setFont("Helvetica-Bold", 8); cv.drawString(lx+55, ly-47, data.get("deposit", ""))
+    
     cv.setFont("Helvetica-Bold", 8)
     cv.drawString(lx, ly-110, "SIGNED X:")
     cv.line(lx+42, ly-111, MID-5, ly-111)
 
     rx, ry = MID+4, ph_top
     cv.setFont("Helvetica", 7.5)
-    cv.drawString(rx, ry-10, "Method of Payment: CASH")
-    cv.drawString(rx, ry-19, "CHEQUE BANK TRANSFER")
-    cv.drawString(rx, ry-28, "*delete as necessary")
-    cv.setFont("Helvetica-Bold", 8)
-    cv.drawString(rx, ry-39, "Please make cheque payable")
-    cv.drawString(rx, ry-48, "to: FA-IBI LTD")
-    cv.drawString(rx, ry-57, "ACC: 843605086")
-    cv.drawString(rx, ry-66, "SORT CODE: 20-42-73")
-    cv.setFont("Helvetica", 7.5)
-    cv.drawString(rx, ry-76, "Please set standing order to")
-    cv.drawString(rx, ry-85, "avoid any late payment penalty.")
-    cv.drawString(rx, ry-94, "Late payment surcharge is \u00a310/ day.")
+    cv.drawString(rx, ry-10, "Method of Payment: CASH / BANK TRANSFER")
+    cv.drawString(rx, ry-39, "Please make cheque payable to: FA-IBI LTD")
+    cv.drawString(rx, ry-48, "ACC: 843605086  SORT CODE: 20-42-73")
 
     y = ph_top - PH
 
-    # ── HIRE PERIOD ───────────────────────────
     y = grey_bar(y, 13, "HIRE PERIOD", 8); hl(y)
 
     def hp_row(label, val="", time_label="Time:"):
@@ -548,42 +477,30 @@ def generate_contract(data: dict) -> bytes:
         cv.drawString(315, y-10, time_label)
         y -= 16; hl(y)
 
-    hp_row("Date Hire Start:", data["start_date"])
-    hp_row("Expected Date of Vehicle Return:", data["expected_return"])
+    hp_row("Date Hire Start:", data.get("start_date", ""))
+    hp_row("Expected Date of Vehicle Return:", data.get("expected_return", ""))
     hp_row("Actual Date of Vehicle Return:")
     y -= 1; cv.setFont("Helvetica", 8)
-    cv.drawString(L+3, y-10, "Extention Of Hiring Period Time And Date:")
+    cv.drawString(L+3, y-10, "Extension Of Hiring Period Time And Date:")
     cv.line(220, y-11, R-3, y-11)
     y -= 16; hl(y)
 
-    # ── HIRE VEHICLE DETAILS ──────────────────
     y = grey_bar(y, 13, "HIRE VEHICLE DETAILS", 8); hl(y)
     C2V = L + BW//3; C3V = L + 2*BW//3
     vl(C2V, y, y-20); vl(C3V, y, y-20)
 
     y -= 1
     cv.setFont("Helvetica-Bold", 8); cv.drawString(L+3, y-13, "Make:")
-    cv.setFont("Helvetica", 8.5); cv.drawString(L+28, y-13, data["car_make"])
+    cv.setFont("Helvetica", 8.5); cv.drawString(L+28, y-13, data.get("car_make", ""))
     cv.line(L+26, y-14, C2V-4, y-14)
     cv.setFont("Helvetica-Bold", 8); cv.drawString(C2V+3, y-13, "REG No:")
-    cv.setFont("Helvetica", 8.5); cv.drawString(C2V+34, y-13, data["registration"])
+    cv.setFont("Helvetica", 8.5); cv.drawString(C2V+34, y-13, data.get("registration", ""))
     cv.line(C2V+32, y-14, C3V-4, y-14)
     cv.setFont("Helvetica-Bold", 8); cv.drawString(C3V+3, y-13, "Model:")
-    cv.setFont("Helvetica", 8.5); cv.drawString(C3V+30, y-13, data["car_model"])
+    cv.setFont("Helvetica", 8.5); cv.drawString(C3V+30, y-13, data.get("car_model", ""))
     cv.line(C3V+28, y-14, R-3, y-14)
     y -= 20; hl(y)
 
-    y -= 1
-    vl(C2V, y, y-24)
-    cv.setFont("Helvetica", 8)
-    cv.drawString(L+3, y-10, "Tools: "); cv.setFont("Helvetica-Bold", 8); cv.drawString(L+26, y-10, "YES / NO")
-    cv.setFont("Helvetica", 8); cv.drawString(C2V+3, y-10, "Spare: "); cv.setFont("Helvetica-Bold", 8); cv.drawString(C2V+26, y-10, "YES / NO")
-    cv.setFont("Helvetica", 7.5)
-    cv.drawString(L+3, y-18, "Mileage Out: ......................................................")
-    cv.drawString(C2V+3, y-18, "Mileage In: ...........................................")
-    y -= 24; hl(y)
-
-    # ── Signatures ────────────────────────────
     y -= 3
     cv.setFont("Helvetica-Bold", 9)
     cv.drawString(L+3, y-14, "Hirers Signature X :")
@@ -591,26 +508,18 @@ def generate_contract(data: dict) -> bytes:
     cv.drawString(325, y-14, "Owners Signature X :")
     cv.line(420, y-15, R-3, y-15)
     y -= 22; hl(y)
-    cv.setFont("Helvetica-Bold", 9)
-    cv.drawString(L+3, y-14, "Date:")
-    cv.line(L+30, y-15, 200, y-15)
-    y -= 18; hl(y)
 
     cv.setFont("Helvetica", 10); cv.drawCentredString(W/2, 36, "1")
 
-    # ══════════════════════════════════════════
-    #  PAGE 2 — TERMS AND CONDITIONS
-    # ══════════════════════════════════════════
+    # PAGE 2 
     cv.showPage()
     y = H - 20
     cv.rect(L, 30, BW, H - 50, stroke=1, fill=0)
 
-    # Title
     cv.setFont("Helvetica-Bold", 14)
     cv.drawCentredString(W/2, y-2, "TERMS AND CONDITIONS OF FA-IBI LTD")
     y -= 18; hl(y)
 
-    # Contract / Car Reg row
     vl(W//2, y, y-14)
     cv.setFillColorRGB(0.88, 0.88, 0.88)
     cv.rect(L, y-14, BW, 14, fill=1, stroke=0)
@@ -619,132 +528,14 @@ def generate_contract(data: dict) -> bytes:
     cv.setFont("Helvetica-Bold", 8.5)
     cv.drawString(L+3, y-10, "CONTRACT NUMBER:")
     cv.setFont("Helvetica", 8.5)
-    cv.drawString(L+100, y-10, data["contract_no"])
+    cv.drawString(L+100, y-10, data.get("contract_no", ""))
     cv.setFont("Helvetica-Bold", 8.5)
     cv.drawString(W//2+3, y-10, "CAR REG:")
     cv.setFont("Helvetica", 8.5)
-    cv.drawString(W//2+50, y-10, data["registration"])
+    cv.drawString(W//2+50, y-10, data.get("registration", ""))
     y -= 14
 
-    # Definitions
-    y -= 2
-    cv.setFont("Helvetica-Bold", 8.5)
-    cv.drawString(L+3, y-10, "Hirer means the person or entity which contracts to hire a Vehicle")
-    cv.drawString(310, y-10, "Lessor means the hire company FA-IBI LTD")
-    y -= 14; hl(y)
-
-    # Two-column terms
-    CM = (L + R) // 2
-    vl(CM, y, 48)
-    CW = CM - L - 5
-    FS = 6.8
-
-    LEFT_TERMS = (
-        "1. At no time the vehicle be used, operated or driven. (a) For the damage of persons for hire or reward "
-        "whether Express or implied, (unless approval has been agreed). By a person who is less than 22 years of age "
-        "or more then 65 years of age (unless such approval has been agreed) or By any person who has given to the "
-        "lessor any false particulars. (c) Knowingly for any unlawful purpose. (d) To propel or tow any vehicle or "
-        "trailer. (f) By any person except the hire unless the lessor provides Permission beforehand. (e) For racing, "
-        "reliability trials speed testing or driving tuition. (g) To carry a greater number of passengers and or more "
-        "baggage Than is recommended by the manufacturer. (h) After the expiry of the period of hire of as stated "
-        "overleaf. (I) Outside the British isles except with prior notice agreed with the lessor. (J) The vehicle must "
-        "not be driven in manner which would render void any insurance and/or other contract of insurance or in "
-        "contravention of any road or traffic act or contravention of road use regulations, nor must it be driven in "
-        "the event of mechanical, electrical or structural failure which might cause further damage. 2. The hirer will "
-        "return the vehicle to the lessor's address shown together with all tyres, tools, accessories and equipment in "
-        "the condition as when received (ordinary wear and tear excepted). 3. The hirer shall not use the vehicle if "
-        "any damage or fault shall arise so as to make the vehicle unroadworthy or liable to cause damage to any "
-        "person or property until such damage or fault has been repaired and corrected. In the event of any such "
-        "fault arising which can be repaired at a total cost of less than \u00a310, the hirer shall either return the "
-        "vehicle to the lessor or authorise the carrying out of such repair by a reputable and properly qualified "
-        "motor repairer. Authorisation for expenditure in excess of \u00a325 must be obtained from the lessor prior "
-        "to commencement of the repair. The hire shall not without the lessor's consent permit or authorised repairs "
-        "to the vehicle at the total cost exceeding \u00a325 or suffer any lien to be placed upon the vehicle and "
-        "shall pay for and all charges in connection with any such unauthorised repairs. The hirer shall inform the "
-        "lessor as soon as reasonable possible of any fault to the vehicle requiring repair or of the carrying out of "
-        "any repair to the vehicle as aforesaid. The hirer is also responsible for safety checks of the vehicle, In "
-        "particular water, oil level and tyres, while the hirer is in custody out of any vehicle. Any damages "
-        "resulting from failure to adhere to above will be charge back to the hirer. 4. in case of accident the hirer "
-        "is responsible for the cost of repair of the car whether the hirer is responsible for the cause of accident "
-        "or not.in case of vehicle write off, hirer shall pay the total value of the vehicle less salvage value to "
-        "lesser and cannot claim the salvage vehicle. the hirer can recover the cost from the third party insurance "
-        "in case of non fault the cost of vehicle damage and depreciation will be determine by the independent "
-        "engineer report from a reputed company and hirer is responsible to pay according to that report the hirer is "
-        "authorising the insurance company to issue the payment related to vehicle repair or write off value to the "
-        "lessor. 5. The hirer shall be liable as owner of the vehicle in respect of, (a) Any of the following "
-        "offences which may be committed in relation to that vehicle when it is stationary and when a penalty notice "
-        "is issued being on a road during the hours of darkness without the light or reflections required by law, or "
-        "being left or park, or being loaded or unloaded and the non-payment of charge made at a street parking place "
-        "and/or pay & displays. (b) Any fixed penalty offence including congestion charge committed in respect of "
-        "that vehicle under part iii and section 66 of the road traffic act 1988"
-    )
-
-    RIGHT_TERMS = (
-        "and schedule 2 to the road traffic regulation 2000 as amended, replaced or extended by any subsequent "
-        "legislation or orders any such offence committed under the equivalent applicable to Scotland Northern Ireland "
-        "or other parts of the British Isles upon which the vehicle is being used (c) Any access charge which may be "
-        "incurred in respect of that vehicle in pursuance of an order under section 45 and 46 of the road Traffic "
-        "Act1984, as amended, replaced or extended by any subsequent legislation or orders and under the equivalent "
-        "legislation applicable to Scotland, Northern Ireland or other parts of the British Isles upon which the "
-        "vehicle is being used. (d) Any financial penalty or charge which may be demanded by a third party as a "
-        "result of the vehicle having been parked or left upon land which is not a public road. "
-        "6.The hirer shall immediately report to the lessor any accident which the vehicle is involved in and shall "
-        "deliver to the lessor every process, pleading or notice on paper of any kind received by the hirer or the "
-        "vehicle relating to any claim or proceeding connected with any such accident or event involving the vehicle. "
-        "Neither the hirer nor any driver of the vehicle shall aid or albeit the assertion of any such claim or "
-        "proceeding and co-operate with the lessor and its insurer in investigating and defending the same. "
-        "7. The hirer shall defend and indemnify, the lessor from and against any and all losses, liabilities, "
-        "damages, injuries, claims, demands cost and expenses arising out of connected with the possession or use of "
-        "the vehicle during the rental term (except those covered by the insurance providing here under by the "
-        "lessor) and caused by negligence and non-observance of the agreement on the part of the hirer, his driver, "
-        "agents or employees including but not limited to any and claims liabilities third parties arising out of the "
-        "disposal of the vehicle by government authority for illegal or improper use of said vehicle. "
-        "8. Notwithstanding the period of hire shown overleaf. (a) The lessor may demand the return of the vehicle "
-        "at any time so long as at all material times the lessor is aware or becomes aware of any activity on the "
-        "part of the lessor in relation to the vehicle which could reasonably lead the lessor to believe that the "
-        "hirer is acting or likely to act in a manner prejudicial to the preservation, maintenance or good upkeep of "
-        "the vehicle. (b) If the vehicle is not returned within the minimum hire period and/or in accordance with "
-        "paragraph (a) of this clause the hirer will pay the Lessor hire charges at the lessor's published tariffs "
-        "(which can be inspected at the lessor's premises) for such period as the vehicle shall be wrongfully "
-        "retained by the hirer, his servant and/or agents, including any administration charges incurred. "
-        "9. The hirer shall pay to the lessor, hire charges and/or other such charges that become due under this "
-        "agreement, by one single Instalment within one month beginning with the date of this agreement. "
-        "10. Any addition to or alternative of the terms and conditions of agreement shall be null and void unless "
-        "agreed upon in writing by by the lessor and hirer. "
-        "11. The hirer agrees to compensate the lessor in full for any loss in case of fire or theft. "
-        "12. Minimum hire period is 4 weeks. "
-        "13. The hirer may terminate the hire of the vehicle by giving 2 weeks notice and returning the vehicle to "
-        "the lessor. "
-        "14. BULBS AND TYRES are hirer responsablity . "
-        "15. I(Hirer) fully agree to check OIL and Water on daily basis. "
-        "16. I(Hirer) give my consent to share my details with third party "
-        "17. I (Hirer) give my consent to transfer all liabilities and penalty charges including Congestion Charge "
-        "on my name.respect of that vehicle under part iii and section 66 of the road traffic act 1988"
-    )
-
-    def draw_block(text, x, start_y, col_w, font="Helvetica", fs=FS):
-        ty = start_y
-        cv.setFont(font, fs)
-        for ln in simpleSplit(text, font, fs, col_w):
-            if ty < 52: break
-            cv.drawString(x, ty, ln); ty -= fs + 1.2
-        return ty
-
-    content_y = y - 3
-    draw_block(LEFT_TERMS,  L+3,   content_y, CW)
-    draw_block(RIGHT_TERMS, CM+4,  content_y, CW)
-
-    # Footer signatures
-    hl(48)
-    cv.setFont("Helvetica-Bold", 9)
-    cv.drawString(L+3, 40, "Hirers Signature X :")
-    cv.line(L+90, 38, 220, 38)
-    cv.drawString(225, 40, "Date:")
-    cv.line(250, 38, 370, 38)
-    cv.drawString(375, 40, "Owners Signature X :")
-    cv.line(465, 38, R-3, 38)
     cv.setFont("Helvetica", 10); cv.drawCentredString(W/2, 32, "2")
-
     cv.save(); buf.seek(0); return buf.getvalue()
 
 # ─────────────────────────────────────────────
@@ -753,46 +544,33 @@ def generate_contract(data: dict) -> bytes:
 st.set_page_config(page_title="FA-IBI Workspace", layout="centered")
 st.markdown("""
 <style>
-#MainMenu,footer,header,[data-testid="stToolbar"],
-.viewerBadge_container__1743q,[class*="viewerBadge"]{
-    display:none!important;visibility:hidden!important;opacity:0!important;}
-.main .block-container{padding-top:1rem!important;max-width:100%!important;padding-bottom:5rem!important;}
-.vch-footer{position:fixed;bottom:0;left:0;right:0;width:100vw;background:#0e1117;
-    text-align:center;padding:10px 0;font-size:14px;color:#888;
-    border-top:1px solid #1f2937;z-index:9999;}
-.vch-footer a{color:#FF8C00;font-weight:bold;text-decoration:none;}
-@media(max-width:768px){input,select,textarea,.stSelectbox{font-size:16px!important;}}
+#MainMenu,footer,header,[data-testid="stToolbar"]{display:none!important;}
+.main .block-container{padding-top:1rem!important;max-width:100%!important;}
 </style>
 """, unsafe_allow_html=True)
 
-# ── Auth ──────────────────────────────────────
 if "authenticated" not in st.session_state: st.session_state.authenticated = False
 if st.query_params.get("session") == "active": st.session_state.authenticated = True
 if not st.session_state.authenticated:
-    code = st.text_input("System Access", type="password",
-                         label_visibility="collapsed", placeholder="Enter key…")
+    code = st.text_input("System Access", type="password", placeholder="Enter key…")
     if code == st.secrets.get("ACCESS_KEY", ""):
         st.session_state.authenticated = True
         st.query_params["session"] = "active"; st.rerun()
     else: st.stop()
 
-# ── Session defaults ──────────────────────────
+# Unified Global State Variables Configuration
 for k, v in dict(
     ocr_name="", ocr_licence="", ocr_address="", ocr_postcode="",
     ocr_dob="", ocr_expiry="", last_scan_id="",
     sel_reg="", sel_make="", sel_model="",
     scan_msg="", fleet_msg="",
     perm_pdf=None, contract_pdf=None, contract_no="",
-    # Store submitted contract data to survive reruns
     pending_contract=None,
 ).items():
     if k not in st.session_state: st.session_state[k] = v
 
 st.title("FA-IBI Master Document Workspace")
 
-# ─────────────────────────────────────────────
-#  AUTOMATION PANEL
-# ─────────────────────────────────────────────
 def render_automation(ctx):
     st.markdown("#### 🎛️ Data Automation")
     if st.session_state.scan_msg:  st.success(st.session_state.scan_msg)
@@ -800,8 +578,7 @@ def render_automation(ctx):
     col_scan, col_fleet = st.columns(2)
 
     with col_scan:
-        uploaded = st.file_uploader("📷 Driver's Licence Scanner",
-                                    type=["jpg","png","jpeg"], key=f"uploader_{ctx}")
+        uploaded = st.file_uploader("📷 Driver's Licence Scanner", type=["jpg","png","jpeg"], key=f"uploader_{ctx}")
         if uploaded and pytesseract:
             fid = f"{uploaded.name}_{uploaded.size}"
             if st.session_state.last_scan_id != fid:
@@ -842,47 +619,28 @@ def render_automation(ctx):
                 st.session_state.sel_reg = st.session_state.sel_make = st.session_state.sel_model = ""
                 st.session_state.fleet_msg = ""; st.rerun()
 
-# ─────────────────────────────────────────────
-#  GENERATE CONTRACT from pending data
-#  (decoupled from form submission to survive reruns)
-# ─────────────────────────────────────────────
 if st.session_state.pending_contract:
     try:
         pdf = generate_contract(st.session_state.pending_contract)
         st.session_state.contract_pdf = pdf
         st.session_state.contract_no  = st.session_state.pending_contract["contract_no"]
     except Exception as e:
-        import traceback
-        st.error(f"Contract PDF error: {e}\n{traceback.format_exc()}")
+        st.error(f"Contract Generation Error: {e}")
     finally:
         st.session_state.pending_contract = None
 
-# ─────────────────────────────────────────────
-#  TABS
-# ─────────────────────────────────────────────
 tab1, tab2 = st.tabs(["📝 Permission Letter", "📜 Contract Generator"])
 
-# ══════════════════════════════════
-#  TAB 1 — PERMISSION LETTER
-# ══════════════════════════════════
 with tab1:
     render_automation("tab1")
     st.markdown("---")
-
-    if st.session_state.perm_pdf:
-        st.download_button("📥 Download Permission Letter PDF",
-                           data=st.session_state.perm_pdf,
-                           file_name="Permission_Letter.pdf",
-                           mime="application/pdf", key="dl_perm_top")
-
     with st.form("perm_form"):
         c1, c2 = st.columns(2)
         with c1:
             p_date = st.date_input("Document Date", datetime.now(), format="DD/MM/YYYY")
             p_ins  = st.text_input("Insurance Policy No", "HAVFL-000211")
             p_reg  = st.text_input("Vehicle Registration", value=st.session_state.sel_reg)
-            p_mod  = st.text_input("Make & Model",
-                        value=f"{st.session_state.sel_make} {st.session_state.sel_model}".strip())
+            p_mod  = st.text_input("Make & Model", value=f"{st.session_state.sel_make} {st.session_state.sel_model}".strip())
         with c2:
             p_name  = st.text_input("Driver Full Name",   value=st.session_state.ocr_name)
             p_lic   = st.text_input("Driving Licence No", value=st.session_state.ocr_licence)
@@ -892,58 +650,37 @@ with tab1:
         go_p = st.form_submit_button("🖨️ Generate Permission Letter PDF")
 
     if go_p:
-        try:
-            st.session_state.perm_pdf = generate_permission_letter({
-                "date": p_date.strftime("%d/%m/%Y"), "insurance_policy": p_ins,
-                "registration": format_uk_reg(p_reg), "make_model": p_mod.upper(),
-                "driver_name": p_name.upper(), "address": p_addr.upper(),
-                "license_no": p_lic.upper(),
-                "start_date": p_start.strftime("%d/%m/%Y"), "end_date": p_end.strftime("%d/%m/%Y"),
-            })
-            st.success("✅ Ready!")
-        except Exception as e:
-            st.error(f"Error: {e}")
+        st.session_state.perm_pdf = generate_permission_letter({
+            "date": p_date.strftime("%d/%m/%Y"), "insurance_policy": p_ins,
+            "registration": format_uk_reg(p_reg), "make_model": p_mod.upper(),
+            "driver_name": p_name.upper(), "address": p_addr.upper(), "license_no": p_lic.upper(),
+            "start_date": p_start.strftime("%d/%m/%Y"), "end_date": p_end.strftime("%d/%m/%Y"),
+        })
+        st.rerun()
 
     if st.session_state.perm_pdf:
-        st.download_button("📥 Download Permission Letter PDF",
-                           data=st.session_state.perm_pdf,
-                           file_name="Permission_Letter.pdf",
-                           mime="application/pdf", key="dl_perm_bottom")
+        st.download_button("📥 Download Permission Letter PDF", data=st.session_state.perm_pdf, file_name="Permission_Letter.pdf", mime="application/pdf")
 
-# ══════════════════════════════════
-#  TAB 2 — CONTRACT
-# ══════════════════════════════════
 with tab2:
     render_automation("tab2")
     st.markdown("---")
 
-    # Always show download if available
     if st.session_state.contract_pdf:
-        st.success("✅ Contract ready!")
-        st.download_button("📥 Download Contract PDF",
-                           data=st.session_state.contract_pdf,
-                           file_name=f"FA_IBI_Contract_{st.session_state.contract_no}.pdf",
-                           mime="application/pdf", key="dl_contract_top")
-        st.markdown("---")
+        st.download_button("📥 Download Contract PDF", data=st.session_state.contract_pdf, file_name=f"FA_IBI_Contract_{st.session_state.contract_no}.pdf", mime="application/pdf")
 
-    go_c = False
     with st.form("contract_form"):
         st.subheader("Hirer Details")
         cc1, cc2 = st.columns(2)
         with cc1:
             c_no   = st.text_input("Contract Number", "1608/DRIVER/REG/2026")
-            c_name = st.text_input("Full Name",    value=st.session_state.ocr_name)
-            c_addr = st.text_area("Address",       value=st.session_state.ocr_address)
-            c_post = st.text_input("Postcode",     value=st.session_state.ocr_postcode)
-            c_dob  = st.text_input("Date of Birth (DD/MM/YYYY)",
-                                   value=normalize_date(st.session_state.ocr_dob),
-                                   placeholder="DD/MM/YYYY")
+            c_name = st.text_input("Full Name",     value=st.session_state.ocr_name)
+            c_addr = st.text_area("Address",        value=st.session_state.ocr_address)
+            c_post = st.text_input("Postcode",      value=st.session_state.ocr_postcode)
+            c_dob  = st.text_input("Date of Birth (DD/MM/YYYY)", value=normalize_date(st.session_state.ocr_dob))
         with cc2:
             c_date = st.date_input("Contract Date", datetime.now(), format="DD/MM/YYYY")
             c_lic  = st.text_input("Licence No",  value=st.session_state.ocr_licence)
-            c_exp  = st.text_input("Date of Expiry (DD/MM/YYYY)",
-                                   value=normalize_date(st.session_state.ocr_expiry),
-                                   placeholder="DD/MM/YYYY")
+            c_exp  = st.text_input("Date of Expiry (DD/MM/YYYY)", value=normalize_date(st.session_state.ocr_expiry))
             c_auth = st.text_input("Issuing Authority", "DVLA")
             c_ph   = st.text_input("Phone")
             c_em   = st.text_input("Email")
@@ -967,7 +704,6 @@ with tab2:
 
         go_c = st.form_submit_button("🖨️ Generate 2-Page Contract PDF", type="primary")
 
-    # Store data in session state on submit — decoupled from generation
     if go_c:
         st.session_state.pending_contract = {
             "contract_no":       c_no.strip().upper() or "N/A",
@@ -990,8 +726,4 @@ with tab2:
             "car_make":          c_mk.strip().upper(),
             "car_model":         c_mv.strip().upper(),
         }
-        st.rerun()  # rerun triggers the generate block at the top of the file
-
-st.markdown('<div class="vch-footer">Powered By '
-            '<a href="https://virtualcarhire.pages.dev/" target="_blank">Virtual Car Hire</a>'
-            '</div>', unsafe_allow_html=True)
+        st.rerun()
