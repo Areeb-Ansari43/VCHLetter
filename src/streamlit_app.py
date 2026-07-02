@@ -22,6 +22,18 @@ try:
 except ImportError:
     stx = None
 
+try:
+    from azure.core.credentials import AzureKeyCredential
+    from azure.ai.documentintelligence import DocumentIntelligenceClient
+    from azure.ai.documentintelligence.models import AnalyzeDocumentRequest
+except ImportError:
+    AzureKeyCredential = None
+    DocumentIntelligenceClient = None
+    AnalyzeDocumentRequest = None
+
+import base64, json
+from reportlab.lib.utils import simpleSplit
+
 SRC_DIR = os.path.dirname(os.path.abspath(__file__))
 
 def _find_img(base_name):
@@ -309,6 +321,92 @@ def run_ocr(uploaded_file) -> str:
 
     return _best_ocr_text(bw)
 
+# ─────────────────────────────────────────────
+#  AZURE AI DOCUMENT INTELLIGENCE — the accurate path
+#
+#  Tesseract is a fixed-pattern OCR engine: it reads pixels, and the
+#  regex-based parse_licence() then has to guess which digits belong
+#  to which field. That's inherently fragile on a photographed plastic
+#  card with glare, angle, or a slightly worn print.
+#
+#  Azure's prebuilt-idDocument model is purpose-built for exactly this:
+#  it's trained specifically on driving licences, passports, and ID
+#  cards and returns structured fields (FirstName, LastName,
+#  DateOfBirth, DateOfExpiration, DocumentNumber, Address...) directly
+#  — no regex guessing which numbers are the DOB vs the expiry vs the
+#  licence number.
+#
+#  Requires an Azure resource. In the Azure portal, create a
+#  "Document Intelligence" resource (the free F0 tier works fine to
+#  start), then add two values to st.secrets:
+#    AZURE_DOCINTEL_ENDPOINT = "https://<your-resource>.cognitiveservices.azure.com/"
+#    AZURE_DOCINTEL_KEY      = "<key from Keys and Endpoint in the portal>"
+#  If these aren't configured, the app falls back to the Tesseract
+#  path automatically.
+# ─────────────────────────────────────────────
+def azure_ocr_available() -> bool:
+    return (
+        DocumentIntelligenceClient is not None
+        and bool(st.secrets.get("AZURE_DOCINTEL_ENDPOINT", ""))
+        and bool(st.secrets.get("AZURE_DOCINTEL_KEY", ""))
+    )
+
+def _field_str(fields, name):
+    f = fields.get(name)
+    if f is None:
+        return ""
+    val = getattr(f, "value_string", None) or getattr(f, "content", None) or ""
+    return str(val).strip()
+
+def _field_date(fields, name):
+    f = fields.get(name)
+    if f is None:
+        return ""
+    d = getattr(f, "value_date", None)
+    if d:
+        return d.strftime("%d/%m/%Y")
+    content = getattr(f, "content", None)
+    return normalize_date(content) if content else ""
+
+def run_ocr_azure(uploaded_file) -> dict:
+    """Returns a dict with the same keys as parse_licence(): surname,
+    forename, dob, expiry, licence, address, postcode."""
+    uploaded_file.seek(0)
+    img = Image.open(uploaded_file).convert("RGB")
+    img = ImageOps.exif_transpose(img)  # respect phone camera orientation
+    img.thumbnail((2000, 2000))
+    buf = io.BytesIO()
+    img.save(buf, format="JPEG", quality=92)
+    img_bytes = buf.getvalue()
+
+    client = DocumentIntelligenceClient(
+        endpoint=st.secrets["AZURE_DOCINTEL_ENDPOINT"],
+        credential=AzureKeyCredential(st.secrets["AZURE_DOCINTEL_KEY"]),
+    )
+    poller = client.begin_analyze_document(
+        "prebuilt-idDocument",
+        AnalyzeDocumentRequest(bytes_source=img_bytes),
+    )
+    result = poller.result()
+
+    if not result.documents:
+        raise ValueError("Azure couldn't detect an ID document in this photo.")
+
+    fields = result.documents[0].fields
+    full_address = _field_str(fields, "Address")
+    postcode = extract_postcode(full_address)
+    address_no_postcode = re.sub(re.escape(postcode), "", full_address, flags=re.I).strip(", ").strip() if postcode else full_address
+
+    return {
+        "surname": _field_str(fields, "LastName").upper(),
+        "forename": _field_str(fields, "FirstName").upper(),
+        "dob": _field_date(fields, "DateOfBirth"),
+        "expiry": _field_date(fields, "DateOfExpiration"),
+        "licence": _field_str(fields, "DocumentNumber").upper(),
+        "address": address_no_postcode.upper(),
+        "postcode": postcode.upper(),
+    }
+
 def parse_licence(raw: str) -> dict:
     blob = " " + re.sub(r"\s+", " ", raw.upper()) + " "
     surname = clean_name(_grab(blob, [r"1\."], [r"2\."])) or (re.search(r"1\.\s*([A-Z\-]+)", blob).group(1).strip() if re.search(r"1\.\s*([A-Z\-]+)", blob) else "")
@@ -335,6 +433,16 @@ def parse_licence(raw: str) -> dict:
 
     return {"surname": surname, "forename": forename, "dob": dob, "expiry": expiry, "licence": licence, "address": addr_clean, "postcode": postcode}
 
+def _wrap_draw(c, text, x, y, max_width, font="Helvetica", size=11, leading=14):
+    """Word-wraps text to max_width and draws it, returning the y position
+    just below the last line so the caller can keep stacking content
+    without guessing how many lines a paragraph took."""
+    c.setFont(font, size)
+    for line in simpleSplit(text, font, size, max_width):
+        c.drawString(x, y, line)
+        y -= leading
+    return y
+
 def generate_permission_letter(data: dict) -> bytes:
     buf = io.BytesIO()
     c = canvas.Canvas(buf, pagesize=letter, pageCompression=1)
@@ -345,14 +453,44 @@ def generate_permission_letter(data: dict) -> bytes:
     c.drawRightString(pw - 54, 595, data["date"])
     c.setFont("Helvetica-Bold", 22)
     c.drawCentredString(pw / 2, 550, "PERMISSION LETTER")
+
+    text_width = pw - 108  # 54pt margin each side
+    y = 515
     c.setFont("Helvetica", 11)
-    c.drawString(54, 520, "To Whom It May Concern,")
-    c.drawString(54, 490, f"We confirm that the below vehicle can be used for the carriage of passengers for hire and reward by prior appointments (private hire) as specified on insurance policy: {data['insurance_policy']}")
-    for i, (label, val) in enumerate([("Vehicle Registration", data["registration"]), ("Make and Model", data["make_model"]), ("Driver Name", data["driver_name"]), ("Address", data["address"]), ("Driving Licence No", data["license_no"])]):
-        c.drawString(54, 405 - i * 22, f"{label} :"); c.drawString(180, 405 - i * 22, val)
-    c.drawString(54, 275, "Hire start date. :"); c.drawString(160, 275, data["start_date"])
-    c.drawString(54, 260, "Hire end date    :"); c.drawString(160, 260, data["end_date"])
-    if sig: c.drawImage(sig, 40, 120, width=280, height=115, mask="auto")
+    c.drawString(54, y, "To Whom It May Concern,")
+    y -= 25
+
+    confirm_text = (
+        f"We confirm that the below vehicle can be used for the carriage of "
+        f"passengers for hire and reward by prior appointments (private hire) "
+        f"as specified on insurance policy: {data['insurance_policy']}"
+    )
+    y = _wrap_draw(c, confirm_text, 54, y, text_width)
+    y -= 4
+
+    auth_text = (
+        "We authorise and give permission to the following individual to use "
+        "the vehicle for all private hire bookings from UBER, BOLT, OLA, FREE "
+        "NOW app, WHEELY and other private hire operators."
+    )
+    y = _wrap_draw(c, auth_text, 54, y, text_width)
+    y -= 18
+
+    c.setFont("Helvetica", 11)
+    for label, val in [("Vehicle Registration", data["registration"]), ("Make and Model", data["make_model"]), ("Driver Name", data["driver_name"]), ("Address", data["address"]), ("Driving Licence No", data["license_no"])]:
+        c.drawString(54, y, f"{label} :"); c.drawString(180, y, val)
+        y -= 22
+    y -= 18
+
+    c.drawString(54, y, "Hire start date. :"); c.drawString(160, y, data["start_date"])
+    y -= 15
+    c.drawString(54, y, "Hire end date    :"); c.drawString(160, y, data["end_date"])
+    y -= 25
+
+    if sig:
+        sig_h = 115
+        sig_y = max(y - sig_h, 118)  # keep the signature clear of the bottom wave artwork
+        c.drawImage(sig, 40, sig_y, width=280, height=sig_h, mask="auto")
     c.save(); buf.seek(0); return buf.getvalue()
 
 # ─────────────────────────────────────────────
@@ -499,6 +637,7 @@ with st.sidebar:
 for k, v in dict(ocr_name="", ocr_licence="", ocr_address="", ocr_postcode="", ocr_dob="", ocr_expiry="", last_scan_id="", sel_reg="", sel_make="", sel_model="", scan_msg="", fleet_msg="", perm_pdf=None, contract_pdf=None, contract_no="", pending_contract=None).items():
     if k not in st.session_state: st.session_state[k] = v
 
+st.title("🚗 FA-IBI Workspace")
 st.markdown("### 🎛️ Shared Data Automation Panel")
 if st.session_state.scan_msg: st.success(st.session_state.scan_msg)
 if st.session_state.fleet_msg: st.info(st.session_state.fleet_msg)
@@ -506,19 +645,25 @@ col_scan, col_fleet = st.columns(2)
 
 with col_scan:
     uploaded = st.file_uploader("📷 Driver's Licence Scanner", type=["jpg","png","jpeg"], key="global_engine_scanner")
-    if uploaded and pytesseract:
+    use_azure = azure_ocr_available()
+    if uploaded and not use_azure:
+        st.caption("ℹ️ Using the built-in Tesseract scanner. Add `AZURE_DOCINTEL_ENDPOINT` and `AZURE_DOCINTEL_KEY` to secrets for much more accurate scanning via Azure AI Document Intelligence.")
+    if uploaded and (use_azure or pytesseract):
         fid = f"{uploaded.name}_{uploaded.size}"
         if st.session_state.last_scan_id != fid:
             with st.spinner("Processing Elements..."):
                 try:
-                    raw = run_ocr(uploaded); p = parse_licence(raw)
+                    if use_azure:
+                        p = run_ocr_azure(uploaded)
+                    else:
+                        raw = run_ocr(uploaded); p = parse_licence(raw)
                     st.session_state.ocr_name, st.session_state.ocr_licence, st.session_state.ocr_address, st.session_state.ocr_postcode, st.session_state.ocr_dob, st.session_state.ocr_expiry = f"{p['forename']} {p['surname']}".strip(), p["licence"], p["address"], p["postcode"], p["dob"], p["expiry"]
                     st.session_state.scan_msg = "✅ Licence scanned successfully! Please double-check the fields below before generating documents."
                 except Exception as e: st.session_state.scan_msg = f"⚠️ Scan parsing failed: {e}"
                 st.session_state.last_scan_id = fid
             st.rerun()
-    elif uploaded and not pytesseract:
-        st.error("pytesseract isn't installed on this server, so scanning is unavailable.")
+    elif uploaded and not use_azure and not pytesseract:
+        st.error("Neither Azure Document Intelligence (secrets not configured) nor pytesseract is available, so scanning can't run.")
 
 with col_fleet:
     opts = ["-- Manual Entry --"] + [f"{v['reg']} ({v['model']})" for v in FLEET_VEHICLES]
