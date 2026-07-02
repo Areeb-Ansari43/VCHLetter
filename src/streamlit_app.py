@@ -13,6 +13,32 @@ except ImportError:
 
 SRC_DIR = os.path.dirname(os.path.abspath(__file__))
 
+# Find Favicon Image dynamically
+def _find_img(base_name):
+    for ext in [".jpg", ".png", ".jpeg", ".JPG", ".PNG"]:
+        p = os.path.join(SRC_DIR, base_name + ext)
+        if os.path.exists(p): return p
+    return None
+
+fav_path = _find_img("Screenshot 2026-06-09 230035") or "🚗"
+
+# ─────────────────────────────────────────────
+#  STREAMLIT CONFIGURATION
+# ─────────────────────────────────────────────
+st.set_page_config(
+    page_title="FA-IBI Workspace",
+    page_icon=fav_path,
+    layout="centered"
+)
+
+# Completely strip any default Streamlit branding strings and menus
+st.markdown("""
+<style>
+#MainMenu, footer, header, [data-testid="stToolbar"] { display: none !important; }
+.viewerBadge_container__1743q, [class*="viewerBadge"] { display: none !important; }
+</style>
+""", unsafe_allow_html=True)
+
 FLEET_VEHICLES = [
     {"reg": "AF70 MYK", "model": "TESLA MODEL 3"},
     {"reg": "BD20 XPU", "model": "MERCEDES-BENZ E300"},
@@ -134,7 +160,6 @@ def strip_address_noise(s: str) -> str:
     s = re.sub(r"UNITED\s+\w*\s*KINGDOM", "", s)
     s = re.sub(r"\b(ENGLAND|SCOTLAND|WALES|NORTHERN\s+IRELAND)\b", "", s)
     s = re.sub(r"\bDVLA\b|\bDVLNI\b", "", s)
-    # Remove dynamic strings of stray OCR characters/reference dates
     s = re.sub(r"\b\d{1,2}\s+\d{1,2}\s+\d{2,4}\b", " ", s)
     s = re.sub(r"\b\d{5,}\b", " ", s)
     s = re.sub(r"\b[1-9][ABCDE58]?\.?\s*", " ", s) 
@@ -155,7 +180,7 @@ def _grab(blob, start_pats, end_pats):
     return ""
 
 # ─────────────────────────────────────────────
-#  OCR CORE SCAN ENGINE
+#  OCR CODE SCAN ENGINE
 # ─────────────────────────────────────────────
 def run_ocr(uploaded_file) -> str:
     img = Image.open(uploaded_file).convert("RGB")
@@ -222,7 +247,7 @@ def parse_licence(raw: str) -> dict:
         m = re.search(r"5\.\s*([A-Z0-9\-]{5,20})", blob)
         if m: licence = re.sub(r"[^A-Z0-9]", "", m.group(1))
 
-    # 8. Address Separation Logic
+    # 8. Address Separation Block
     raw_8 = _grab(blob, [r"8\."], [r"9\."])
     if not raw_8:
         m = re.search(r"8\.\s*(.*?)(?=\s*9\.)", blob, re.DOTALL)
@@ -231,7 +256,6 @@ def parse_licence(raw: str) -> dict:
     address_block = raw_8 if raw_8 else blob
     postcode = extract_postcode(address_block)
     
-    # Clean licence number string values completely out of the address payload block
     if licence:
         spaced_licence = " ".join(list(licence))
         address_block = address_block.replace(licence, "")
@@ -241,7 +265,6 @@ def parse_licence(raw: str) -> dict:
     if postcode:
         addr_clean = re.sub(re.escape(postcode), "", addr_clean, flags=re.I)
     
-    # Strip any numeric fragments or broken row elements that pollute layout blocks
     addr_clean = re.sub(r"^[0-9A-Z]{1,2}\b\.?\s*", "", addr_clean.strip()).strip(", ").strip()
     addr_clean = re.sub(r"^\d{2,}\s+", "", addr_clean).strip()
 
@@ -255,12 +278,6 @@ def parse_licence(raw: str) -> dict:
 # ─────────────────────────────────────────────
 #  PDF GENERATION ENGINE
 # ─────────────────────────────────────────────
-def _find_img(base_name):
-    for ext in [".jpg", ".png", ".jpeg", ".JPG", ".PNG"]:
-        p = os.path.join(SRC_DIR, base_name + ext)
-        if os.path.exists(p): return p
-    return None
-
 def generate_permission_letter(data: dict) -> bytes:
     buf = io.BytesIO()
     c = canvas.Canvas(buf, pagesize=letter, pageCompression=1)
@@ -310,7 +327,6 @@ def generate_contract(data: dict) -> bytes:
     # ──── PAGE 1 ────
     if bg1: cv.drawImage(bg1, 0, 0, width=W, height=H)
     
-    # Font constrained strictly to 8.8 across dataset values
     cv.setFont("Helvetica-Bold", 8.8)
     cv.drawString(395, 714, data.get("contract_no", ""))
     cv.drawString(530, 714, data.get("date", ""))
@@ -353,9 +369,6 @@ def generate_contract(data: dict) -> bytes:
 # ─────────────────────────────────────────────
 #  STREAMLIT UI ENGINE
 # ─────────────────────────────────────────────
-st.set_page_config(page_title="FA-IBI Workspace", layout="centered")
-st.markdown("<style>#MainMenu,footer,header,[data-testid='stToolbar']{display:none!important;}</style>", unsafe_allow_html=True)
-
 if "authenticated" not in st.session_state: st.session_state.authenticated = False
 if st.query_params.get("session") == "active": st.session_state.authenticated = True
 if not st.session_state.authenticated:
@@ -365,7 +378,6 @@ if not st.session_state.authenticated:
         st.query_params["session"] = "active"; st.rerun()
     else: st.stop()
 
-# State variables registration map
 for k, v in dict(
     ocr_name="", ocr_licence="", ocr_address="", ocr_postcode="",
     ocr_dob="", ocr_expiry="", last_scan_id="",
@@ -376,7 +388,7 @@ for k, v in dict(
 ).items():
     if k not in st.session_state: st.session_state[k] = v
 
-st.title("FA-IBI Master Document Workspace")
+st.title("FA-IBI Workspace")
 
 # SHARED AUTOMATION CONTROL PANEL
 st.markdown("### 🎛️ Shared Data Automation Panel")
@@ -437,7 +449,6 @@ if st.session_state.pending_contract:
     finally:
         st.session_state.pending_contract = None
 
-# Tab initialization logic
 tab1, tab2 = st.tabs(["📝 Permission Letter", "📜 Contract Generator"])
 
 with tab1:
