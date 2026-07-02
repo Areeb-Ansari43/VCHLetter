@@ -51,16 +51,14 @@ if "auth_token" in query_params:
         st.session_state.authenticated = True
     st.query_params.clear()
 
-# Pure JavaScript Sync Pipeline - Handles URL cleanup and automatic logins seamlessly
+# Pure JavaScript Sync Pipeline - URL scrubbing and cookie automatic logins
 st.html("""
     <script>
-    // Force immediate URL parameter cleaning
     if (window.parent.location.search.length > 0) {
         const cleanUrl = window.parent.location.protocol + "//" + window.parent.location.host + window.parent.location.pathname;
         window.parent.history.replaceState({}, document.title, cleanUrl);
     }
     
-    // Check local storage for persistent validation signature
     const isVerified = localStorage.getItem("fa_ibi_auth");
     if (isVerified === "true" && !window.parent.__st_auto_logged) {
         window.parent.__st_auto_logged = true;
@@ -272,16 +270,18 @@ def generate_permission_letter(data: dict) -> bytes:
     c.setFont("Helvetica", 11)
     c.drawString(54, 514, "To Whom It May Concern,")
     
+    # Clean spacing overhaul - completely removed gaps to align perfectly
     body_text = f"We confirm that the below vehicle can be used for the carriage of passengers for hire and reward by prior appointments (private hire) as specified on insurance policy: {data['insurance_policy']}"
     lines = simpleSplit(body_text, "Helvetica", 11, pw - 108)
-    y_text = 478
+    y_text = 494
     for l in lines:
         c.drawString(54, y_text, l)
         y_text -= 15
         
-    c.drawString(54, 436, "We authorise and give permission to the following individual to use the vehicle for all private hire bookings")
-    c.drawString(54, 420, "from UBER, BOLT, OLA, FREE NOW app, WHEELY and other private hire operators.")
+    c.drawString(54, y_text - 5, f"We authorise and give permission to the following individual ({data['driver_name']}) to use the vehicle for all private hire bookings")
+    c.drawString(54, y_text - 20, "from UBER, BOLT, OLA, FREE NOW app, WHEELY and other private hire operators.")
     
+    # Blueprint absolute structure coordinates layout
     c.drawString(54, 385, "Vehicle Registration :")
     c.drawString(180, 385, data["registration"])
     
@@ -312,8 +312,8 @@ def generate_permission_letter(data: dict) -> bytes:
     c.drawString(54, y_next - 18, "Hire end date    :")
     c.drawString(180, y_next - 18, data["end_date"])
     
-    c.drawString(54, y_next - 60, "Regards,")
-    if sig: c.drawImage(sig, 40, y_next - 175, width=280, height=115, mask="auto")
+    c.drawString(54, y_next - 50, "Regards,")
+    if sig: c.drawImage(sig, 40, y_next - 165, width=280, height=115, mask="auto")
     
     c.save()
     buf.seek(0)
@@ -366,7 +366,6 @@ if not st.session_state.authenticated:
         if code == st.secrets.get("ACCESS_KEY", ""):
             st.session_state.authenticated = True
             
-            # Commit active credentials directly to the browser memory stack on authorization pass
             st.components.v1.html("""
                 <script>
                 localStorage.setItem("fa_ibi_auth", "true");
@@ -474,7 +473,7 @@ with tab1:
         with c1:
             p_date, p_ins, p_reg, p_mod = st.date_input("Document Date", datetime.now(), format="DD/MM/YYYY", key="p_form_date"), st.text_input("Insurance Policy No", "HAVFL-000211"), st.text_input("Vehicle Registration", value=st.session_state.sel_reg), st.text_input("Make & Model", value=f"{st.session_state.sel_make} {st.session_state.sel_model}".strip())
         with c2:
-            p_name, p_lic, p_start, p_end = st.text_input("Driver Full Name", value=st.session_state.ocr_name), st.text_input("Driving Licence No", value=st.session_state.ocr_licence), st.date_input("Hire Start Date", datetime.now(), format="DD/MM/YYYY", key="p_form_start"), st.date_input("Hire End Date", datetime.now(), format="DD/MM/YYYY", key="p_form_end")
+            p_name, p_lic, p_start, p_end = st.text_input("Driver Full Name", value=st.session_state.ocr_name or "MUHAMED SOHAIL QURESHI"), st.text_input("Driving Licence No", value=st.session_state.ocr_licence), st.date_input("Hire Start Date", datetime.now(), format="DD/MM/YYYY", key="p_form_start"), st.date_input("Hire End Date", datetime.now(), format="DD/MM/YYYY", key="p_form_end")
         p_addr = st.text_area("Driver Address", value=st.session_state.ocr_address)
         go_p = st.form_submit_button("🖨️ Generate Permission Letter PDF")
     if go_p:
@@ -491,7 +490,7 @@ with tab2:
         st.subheader("Hirer Details")
         cc1, cc2 = st.columns(2)
         with cc1:
-            c_no, c_name, c_addr, c_post, c_dob = st.text_input("Contract Number", "1608/DRIVER/REG/2026"), st.text_input("Full Name", value=st.session_state.ocr_name), st.text_area("Address", value=st.session_state.ocr_address), st.text_input("Postcode", value=st.session_state.ocr_postcode), st.text_input("Date of Birth (DD/MM/YYYY)", value=normalize_date(st.session_state.ocr_dob))
+            c_no, c_name, c_addr, c_post, c_dob = st.text_input("Contract Number", "1608/DRIVER/REG/2026"), st.text_input("Full Name", value=st.session_state.ocr_name or "MUHAMED SOHAIL QURESHI"), st.text_area("Address", value=st.session_state.ocr_address), st.text_input("Postcode", value=st.session_state.ocr_postcode), st.text_input("Date of Birth (DD/MM/YYYY)", value=normalize_date(st.session_state.ocr_dob))
         with cc2:
             c_date, c_lic, c_exp, c_auth, c_ph, c_em = st.date_input("Contract Date", datetime.now(), format="DD/MM/YYYY", key="c_form_date"), st.text_input("Licence No", value=st.session_state.ocr_licence), st.text_input("Date of Expiry (DD/MM/YYYY)", value=normalize_date(st.session_state.ocr_expiry)), st.text_input("Issuing Authority", "DVLA"), st.text_input("Phone"), st.text_input("Email")
         st.markdown("---"); pp1, pp2, pp3 = st.columns(3)
