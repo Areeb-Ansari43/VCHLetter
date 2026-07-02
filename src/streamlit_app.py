@@ -66,10 +66,12 @@ AUTH_COOKIE_NAME = "fa_ibi_auth"
 AUTH_COOKIE_DAYS = 30
 
 if stx is not None:
-    @st.cache_resource
-    def _get_cookie_manager():
-        return stx.CookieManager()
-    cookie_manager = _get_cookie_manager()
+    # NOTE: CookieManager() creates a widget the moment it's constructed,
+    # so it must NOT be wrapped in @st.cache_data / @st.cache_resource —
+    # doing that triggers Streamlit's CachedWidgetWarning and can produce
+    # stale cookie reads. Just instantiate it plainly each run; the
+    # component itself is cheap and Streamlit reuses it by key.
+    cookie_manager = stx.CookieManager(key="fa_ibi_cookie_manager")
 else:
     cookie_manager = None
     st.warning(
