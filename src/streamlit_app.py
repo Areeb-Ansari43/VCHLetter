@@ -134,7 +134,6 @@ def strip_address_noise(s: str) -> str:
     s = re.sub(r"UNITED\s+\w*\s*KINGDOM", "", s)
     s = re.sub(r"\b(ENGLAND|SCOTLAND|WALES|NORTHERN\s+IRELAND)\b", "", s)
     s = re.sub(r"\bDVLA\b|\bDVLNI\b", "", s)
-    # Remove fragments of stray dates or layout reference indices
     s = re.sub(r"\b\d{1,2}\s+\d{1,2}\s+\d{2,4}\b", " ", s)
     s = re.sub(r"\b\d{6,}\b", " ", s)
     s = re.sub(r"\b[1-9][ABCDE58]?\.?\s*", " ", s) 
@@ -155,7 +154,7 @@ def _grab(blob, start_pats, end_pats):
     return ""
 
 # ─────────────────────────────────────────────
-#  OCR CORE SCAN ENGINE
+#  OCR CODE SCAN ENGINE
 # ─────────────────────────────────────────────
 def run_ocr(uploaded_file) -> str:
     img = Image.open(uploaded_file).convert("RGB")
@@ -215,7 +214,6 @@ def parse_licence(raw: str) -> dict:
     # 5. Licence Number
     licence = ""
     clean_strip = re.sub(r"\s", "", blob)
-    # Search for standard UK driving licence template signature blocks
     lic_match = re.search(r"5\.?([A-Z9]{5}\d{6}[A-Z9]{2}[A-Z0-9]{3,5})", clean_strip)
     if lic_match:
         licence = lic_match.group(1)[:16]
@@ -223,7 +221,7 @@ def parse_licence(raw: str) -> dict:
         m = re.search(r"5\.\s*([A-Z0-9\-]{5,20})", blob)
         if m: licence = re.sub(r"[^A-Z0-9]", "", m.group(1))
 
-    # 8. Address Separation Logic
+    # 8. Address Separation Block
     raw_8 = _grab(blob, [r"8\."], [r"9\."])
     if not raw_8:
         m = re.search(r"8\.\s*(.*?)(?=\s*9\.)", blob, re.DOTALL)
@@ -232,14 +230,18 @@ def parse_licence(raw: str) -> dict:
     address_block = raw_8 if raw_8 else blob
     postcode = extract_postcode(address_block)
     
-    # Process address text segments to clear line pollution
+    # Clean the licence number string completely out of the address region
+    if licence:
+        spaced_licence = " ".join(list(licence))
+        address_block = address_block.replace(licence, "")
+        address_block = address_block.replace(spaced_licence, "")
+
     addr_clean = strip_address_noise(address_block)
     if postcode:
         addr_clean = re.sub(re.escape(postcode), "", addr_clean, flags=re.I)
     
-    # Remove leading row/index remnants
+    # Clear index tags and broken noise strings
     addr_clean = re.sub(r"^[0-9A-Z]{1,2}\b\.?\s*", "", addr_clean.strip()).strip(", ").strip()
-    # Strip any broken prefix digits that look like scanner bleeding fragments
     addr_clean = re.sub(r"^\d{2,}\s+", "", addr_clean).strip()
 
     return {
@@ -307,12 +309,12 @@ def generate_contract(data: dict) -> bytes:
     # ──── PAGE 1 ────
     if bg1: cv.drawImage(bg1, 0, 0, width=W, height=H)
     
-    cv.setFont("Helvetica-Bold", 9)
+    # Form layout forced entirely to 8.8
+    cv.setFont("Helvetica-Bold", 8.8)
     cv.drawString(395, 714, data.get("contract_no", ""))
     cv.drawString(530, 714, data.get("date", ""))
     
-    # Adjusted form baselines to clear line borders perfectly
-    cv.setFont("Helvetica", 8)
+    cv.setFont("Helvetica", 8.8)
     cv.drawString(120, 650, data.get("driver_name", ""))
     cv.drawString(465, 650, data.get("dob", ""))
     cv.drawString(120, 628, data.get("address", ""))
@@ -323,19 +325,16 @@ def generate_contract(data: dict) -> bytes:
     cv.drawString(120, 584, data.get("phone", ""))
     cv.drawString(260, 584, data.get("email", ""))
 
-    # Financial Field Mappings
-    cv.setFont("Helvetica-Bold", 9)
+    cv.setFont("Helvetica-Bold", 8.8)
     cv.drawString(130, 478, data.get("rent", ""))
     cv.drawString(145, 440, data.get("rate", ""))
     cv.drawString(130, 386, data.get("deposit", ""))
 
-    # Contract Active Term Dates
-    cv.setFont("Helvetica", 8)
+    cv.setFont("Helvetica", 8.8)
     cv.drawString(130, 310, data.get("start_date", ""))
     cv.drawString(215, 294, data.get("expected_return", ""))
 
-    # Vehicle Spec Field Lines
-    cv.setFont("Helvetica-Bold", 8.5)
+    cv.setFont("Helvetica-Bold", 8.8)
     cv.drawString(85, 133, data.get("car_make", ""))
     cv.drawString(290, 133, data.get("registration", ""))
     cv.drawString(465, 133, data.get("car_model", ""))
@@ -344,7 +343,7 @@ def generate_contract(data: dict) -> bytes:
     cv.showPage()
     if bg2: cv.drawImage(bg2, 0, 0, width=W, height=H)
         
-    cv.setFont("Helvetica-Bold", 9)
+    cv.setFont("Helvetica-Bold", 8.8)
     cv.drawString(145, 715, data.get("contract_no", ""))
     cv.drawString(390, 715, data.get("registration", ""))
 
