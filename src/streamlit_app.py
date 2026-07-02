@@ -134,8 +134,9 @@ def strip_address_noise(s: str) -> str:
     s = re.sub(r"UNITED\s+\w*\s*KINGDOM", "", s)
     s = re.sub(r"\b(ENGLAND|SCOTLAND|WALES|NORTHERN\s+IRELAND)\b", "", s)
     s = re.sub(r"\bDVLA\b|\bDVLNI\b", "", s)
+    # Remove dynamic strings of stray OCR characters/reference dates
     s = re.sub(r"\b\d{1,2}\s+\d{1,2}\s+\d{2,4}\b", " ", s)
-    s = re.sub(r"\b\d{6,}\b", " ", s)
+    s = re.sub(r"\b\d{5,}\b", " ", s)
     s = re.sub(r"\b[1-9][ABCDE58]?\.?\s*", " ", s) 
     s = re.sub(r"[^A-Z0-9 ,'\-]", " ", s)
     s = re.sub(r"\s+", " ", s).strip().strip(",").strip()
@@ -154,7 +155,7 @@ def _grab(blob, start_pats, end_pats):
     return ""
 
 # ─────────────────────────────────────────────
-#  OCR CODE SCAN ENGINE
+#  OCR CORE SCAN ENGINE
 # ─────────────────────────────────────────────
 def run_ocr(uploaded_file) -> str:
     img = Image.open(uploaded_file).convert("RGB")
@@ -221,7 +222,7 @@ def parse_licence(raw: str) -> dict:
         m = re.search(r"5\.\s*([A-Z0-9\-]{5,20})", blob)
         if m: licence = re.sub(r"[^A-Z0-9]", "", m.group(1))
 
-    # 8. Address Separation Block
+    # 8. Address Separation Logic
     raw_8 = _grab(blob, [r"8\."], [r"9\."])
     if not raw_8:
         m = re.search(r"8\.\s*(.*?)(?=\s*9\.)", blob, re.DOTALL)
@@ -230,7 +231,7 @@ def parse_licence(raw: str) -> dict:
     address_block = raw_8 if raw_8 else blob
     postcode = extract_postcode(address_block)
     
-    # Clean the licence number string completely out of the address region
+    # Clean licence number string values completely out of the address payload block
     if licence:
         spaced_licence = " ".join(list(licence))
         address_block = address_block.replace(licence, "")
@@ -240,7 +241,7 @@ def parse_licence(raw: str) -> dict:
     if postcode:
         addr_clean = re.sub(re.escape(postcode), "", addr_clean, flags=re.I)
     
-    # Clear index tags and broken noise strings
+    # Strip any numeric fragments or broken row elements that pollute layout blocks
     addr_clean = re.sub(r"^[0-9A-Z]{1,2}\b\.?\s*", "", addr_clean.strip()).strip(", ").strip()
     addr_clean = re.sub(r"^\d{2,}\s+", "", addr_clean).strip()
 
@@ -309,7 +310,7 @@ def generate_contract(data: dict) -> bytes:
     # ──── PAGE 1 ────
     if bg1: cv.drawImage(bg1, 0, 0, width=W, height=H)
     
-    # Form layout forced entirely to 8.8
+    # Font constrained strictly to 8.8 across dataset values
     cv.setFont("Helvetica-Bold", 8.8)
     cv.drawString(395, 714, data.get("contract_no", ""))
     cv.drawString(530, 714, data.get("date", ""))
@@ -364,6 +365,7 @@ if not st.session_state.authenticated:
         st.query_params["session"] = "active"; st.rerun()
     else: st.stop()
 
+# State variables registration map
 for k, v in dict(
     ocr_name="", ocr_licence="", ocr_address="", ocr_postcode="",
     ocr_dob="", ocr_expiry="", last_scan_id="",
@@ -376,7 +378,7 @@ for k, v in dict(
 
 st.title("FA-IBI Master Document Workspace")
 
-# SHARED AUTOMATION CONTROL
+# SHARED AUTOMATION CONTROL PANEL
 st.markdown("### 🎛️ Shared Data Automation Panel")
 if st.session_state.scan_msg:  st.success(st.session_state.scan_msg)
 if st.session_state.fleet_msg: st.info(st.session_state.fleet_msg)
@@ -435,6 +437,7 @@ if st.session_state.pending_contract:
     finally:
         st.session_state.pending_contract = None
 
+# Tab initialization logic
 tab1, tab2 = st.tabs(["📝 Permission Letter", "📜 Contract Generator"])
 
 with tab1:
