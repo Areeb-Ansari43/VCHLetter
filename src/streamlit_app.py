@@ -59,7 +59,37 @@ st.markdown("""
 footer {visibility: hidden;}
 header {visibility: hidden;}
 [data-testid="stToolbar"] {visibility: hidden !important;}
+[data-testid="stStatusWidget"] {visibility: hidden !important;}
+[data-testid="stDecoration"] {visibility: hidden !important;}
+.stApp { padding-bottom: 46px; }
+
+.fa-ibi-footer {
+    position: fixed;
+    left: 0;
+    bottom: 0;
+    width: 100%;
+    height: 40px;
+    background-color: #0e1117;
+    border-top: 1px solid #262730;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    font-size: 13px;
+    color: #cfcfcf;
+    z-index: 2147483647;
+}
+.fa-ibi-footer a {
+    color: #ff8c00;
+    font-weight: 600;
+    text-decoration: none;
+}
+.fa-ibi-footer a:hover { text-decoration: underline; }
 </style>
+
+<div class="fa-ibi-footer">
+    Powered By <a href="https://virtualcarhire.pages.dev/" target="_blank" rel="noopener">&nbsp;Virtual Car Hire</a>
+</div>
 """, unsafe_allow_html=True)
 
 # ─────────────────────────────────────────────
@@ -489,8 +519,12 @@ def generate_permission_letter(data: dict) -> bytes:
 
     if sig:
         sig_h = 115
-        sig_y = max(y - sig_h, 118)  # keep the signature clear of the bottom wave artwork
+        sig_y = max(y - sig_h, 146)  # keep the signature + name/title clear of the bottom wave artwork
         c.drawImage(sig, 40, sig_y, width=280, height=sig_h, mask="auto")
+        c.setFont("Helvetica-Bold", 11)
+        c.drawString(54, sig_y - 14, "Muhammad Sohail Qureshi")
+        c.setFont("Helvetica", 11)
+        c.drawString(54, sig_y - 28, "Director (FA-IBI LTD)")
     c.save(); buf.seek(0); return buf.getvalue()
 
 # ─────────────────────────────────────────────
@@ -514,8 +548,21 @@ def generate_permission_letter(data: dict) -> bytes:
 # ─────────────────────────────────────────────
 CONTRACT_PAGE1_FIELDS = {
     # key:               (x,   y,   font_size)
+    #
+    # These were measured directly by analysing your actual generated
+    # contract screenshot pixel-by-pixel (page maps to pixels at an
+    # exact 4:3 ratio) rather than guessed, so they should now land on
+    # the correct rows. If anything still needs a small nudge, the
+    # Calibration Grid button in the Contract tab will show you exactly
+    # how many points to move it.
+    #
+    # NOTE: the "date" field was removed — this template has no blank
+    # line reserved for a document date anywhere on page 1 (the top
+    # row only has room for Contract Number + Page indicator, and the
+    # page ends right after the signature line with no Date field
+    # after it). If you'd like a date shown somewhere, let me know
+    # where on the template and I'll add it properly.
     "contract_no":       (400, 704, 8.0),
-    "date":               (548, 704, 8.0),
     "driver_name":        (120, 650, 8.8),
     "dob":                (465, 650, 8.8),
     "address":            (120, 628, 8.8),
@@ -525,14 +572,14 @@ CONTRACT_PAGE1_FIELDS = {
     "expiry_date":        (485, 606, 8.8),
     "phone":              (120, 584, 8.8),
     "email":              (260, 584, 8.8),
-    "rent":               (130, 478, 8.8),
-    "rate":               (145, 440, 8.8),
-    "deposit":            (130, 386, 8.8),
-    "start_date":         (130, 310, 8.8),
-    "expected_return":    (215, 294, 8.8),
-    "car_make":           (85, 133, 8.8),
-    "registration":       (290, 133, 8.8),
-    "car_model":          (465, 133, 8.8),
+    "rent":               (110, 384, 8.8),   # "The Rental of £___" row
+    "rate":               (138, 350, 8.8),   # "...at the rate of ___ Pence per mile" row
+    "deposit":            (130, 316, 8.8),   # "Deposit Paid £___" row
+    "start_date":         (111, 217, 8.8),   # "Date Hire Start:" row
+    "expected_return":    (216, 203, 8.8),   # "Expected Date of Vehicle Return:" row
+    "car_make":           (85, 155, 8.8),
+    "registration":       (290, 155, 8.8),
+    "car_model":          (465, 155, 8.8),
 }
 CONTRACT_PAGE2_FIELDS = {
     "contract_no":  (145, 715, 8.8),
@@ -637,7 +684,7 @@ with st.sidebar:
 for k, v in dict(ocr_name="", ocr_licence="", ocr_address="", ocr_postcode="", ocr_dob="", ocr_expiry="", last_scan_id="", sel_reg="", sel_make="", sel_model="", scan_msg="", fleet_msg="", perm_pdf=None, contract_pdf=None, contract_no="", pending_contract=None).items():
     if k not in st.session_state: st.session_state[k] = v
 
-st.title("🚗 FA-IBI Workspace")
+st.title("FA-IBI Workspace")
 st.markdown("### 🎛️ Shared Data Automation Panel")
 if st.session_state.scan_msg: st.success(st.session_state.scan_msg)
 if st.session_state.fleet_msg: st.info(st.session_state.fleet_msg)
