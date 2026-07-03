@@ -549,20 +549,17 @@ def generate_permission_letter(data: dict) -> bytes:
 CONTRACT_PAGE1_FIELDS = {
     # key:               (x,   y,   font_size)
     #
-    # These were measured directly by analysing your actual generated
-    # contract screenshot pixel-by-pixel (page maps to pixels at an
-    # exact 4:3 ratio) rather than guessed, so they should now land on
-    # the correct rows. If anything still needs a small nudge, the
-    # Calibration Grid button in the Contract tab will show you exactly
-    # how many points to move it.
+    # Measured directly from your calibration grid screenshots via
+    # pixel analysis (confirmed exact 4:3 px-to-point scale), not
+    # guessed. If anything still needs a nudge, re-download the
+    # Calibration Grid PDF and read the offset straight off it.
     #
-    # NOTE: the "date" field was removed — this template has no blank
-    # line reserved for a document date anywhere on page 1 (the top
-    # row only has room for Contract Number + Page indicator, and the
-    # page ends right after the signature line with no Date field
-    # after it). If you'd like a date shown somewhere, let me know
-    # where on the template and I'll add it properly.
-    "contract_no":       (400, 704, 8.0),
+    # "date" now points at the REAL "Date:" line at the very bottom
+    # of page 1, below the signatures — the earlier removal was
+    # because the top row (Contract Number + Page indicator) has no
+    # room for it, which is still true; this bottom one does exist.
+    "contract_no":       (400, 700, 8.0),
+    "date":               (80, 48, 8.8),    # bottom "Date:___" row, below signatures
     "driver_name":        (120, 650, 8.8),
     "dob":                (465, 650, 8.8),
     "address":            (120, 628, 8.8),
@@ -576,14 +573,15 @@ CONTRACT_PAGE1_FIELDS = {
     "rate":               (138, 350, 8.8),   # "...at the rate of ___ Pence per mile" row
     "deposit":            (130, 316, 8.8),   # "Deposit Paid £___" row
     "start_date":         (111, 217, 8.8),   # "Date Hire Start:" row
-    "expected_return":    (216, 203, 8.8),   # "Expected Date of Vehicle Return:" row
-    "car_make":           (85, 155, 8.8),
-    "registration":       (290, 155, 8.8),
-    "car_model":          (465, 155, 8.8),
+    "expected_return":    (216, 194, 8.8),   # "Expected Date of Vehicle Return:" row — corrected, was landing 11pt high
+    "car_make":           (85, 135, 8.8),    # corrected — last update overshot into the "HIRE VEHICLE DETAILS" bar above
+    "registration":       (290, 135, 8.8),
+    "car_model":          (465, 135, 8.8),
 }
 CONTRACT_PAGE2_FIELDS = {
-    "contract_no":  (145, 715, 8.8),
-    "registration": (390, 715, 8.8),
+    "contract_no":  (145, 705, 8.8),   # corrected, was landing 10pt high
+    "registration": (390, 705, 8.8),   # corrected, was landing 10pt high
+    "date":         (280, 52, 8.8),    # middle "Date:" column between the two signature lines
 }
 # Optional per-field max width (points) so long values (long names,
 # addresses, contract numbers) auto-shrink instead of overrunning
