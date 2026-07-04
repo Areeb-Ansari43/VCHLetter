@@ -62,20 +62,36 @@ st.set_page_config(
 #  BROWSER TAB TITLE — Streamlit appends " · Streamlit" to whatever
 #  page_title is set above; this forces the tab back to a clean title.
 # ─────────────────────────────────────────────
-st.markdown("""
+import streamlit.components.v1 as components
+
+# ─────────────────────────────────────────────
+#  BROWSER TAB TITLE — Streamlit appends " · Streamlit" to whatever
+#  page_title is set above. st.markdown() never actually runs <script>
+#  tags (Streamlit strips script execution from injected HTML), which is
+#  why a markdown-based fix silently does nothing. components.html()
+#  renders in a real iframe that DOES execute scripts, so we reach up to
+#  the parent (top-level) document to force the tab title.
+# ─────────────────────────────────────────────
+components.html("""
 <script>
 (function() {
     const desiredTitle = "FA-IBI Workspace";
-    function applyTitle() { if (document.title !== desiredTitle) document.title = desiredTitle; }
-    applyTitle();
-    const titleEl = document.querySelector('title');
-    if (titleEl) {
-        new MutationObserver(applyTitle).observe(titleEl, { childList: true });
+    function applyTitle() {
+        try {
+            if (window.parent.document.title !== desiredTitle) {
+                window.parent.document.title = desiredTitle;
+            }
+        } catch (e) {}
     }
-    setInterval(applyTitle, 500);
+    applyTitle();
+    try {
+        const titleEl = window.parent.document.querySelector('title');
+        if (titleEl) new MutationObserver(applyTitle).observe(titleEl, { childList: true });
+    } catch (e) {}
+    setInterval(applyTitle, 300);
 })();
 </script>
-""", unsafe_allow_html=True)
+""", height=0, width=0)
 
 # ─────────────────────────────────────────────
 #  LINK-PREVIEW METADATA (best effort)
@@ -568,7 +584,7 @@ def generate_permission_letter(data: dict) -> bytes:
 # ─────────────────────────────────────────────
 CONTRACT_PAGE1_FIELDS = {
     # key:               (x,     y,     font_size)
-    "contract_no":       (400,   700,   8.0),
+    "contract_no":       (370,   694,   8.0),
     "date":              (80,    48,    8.8),    # bottom "Date:___" row, below signatures
     "driver_name":       (87,    660.5, 8.8),
     "dob":               (494,   660.5, 8.8),
@@ -579,7 +595,7 @@ CONTRACT_PAGE1_FIELDS = {
     "expiry_date":       (489,   611.5, 8.8),
     "phone":             (60,    582.4, 8.8),
     "email":             (283,   582.4, 8.8),
-    "rent":              (145,   375,   8.8),   # "The Rental of £___" row
+    "rent":              (110,   375,   8.8),   # "The Rental of £___" row
     "rate":              (135,   343.9, 8.8),   # "...at the rate of ___ Pence per mile" row
     "deposit":           (107,   311.5, 8.8),   # "Deposit Paid £___" row
     "start_date":        (108,   213.4, 8.8),   # "Date Hire Start:" row
@@ -589,9 +605,9 @@ CONTRACT_PAGE1_FIELDS = {
     "car_model":         (456,   133.9, 8.8),
 }
 CONTRACT_PAGE2_FIELDS = {
-    "contract_no":  (140, 719,  8.8),   # close beside the "CONTRACT NUMBER:" label
-    "registration": (350, 719,  8.8),   # close beside the "CAR REG:" label
-    "date":         (300, 48,   8.8),   # "Date:" slot, kept clear of the "Owners Signature X" label
+    "contract_no":  (140, 723,  8.8),   # close beside the "CONTRACT NUMBER:" label
+    "registration": (375, 723,  8.8),   # clear of the "CAR REG:" label
+    "date":         (280, 48,   8.8),   # "Date:" slot, kept clear of the "Owners Signature X" label
 }
 CONTRACT_FIELD_MAXW = {
     "contract_no": 130,
