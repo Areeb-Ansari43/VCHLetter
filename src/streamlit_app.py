@@ -465,48 +465,48 @@ def generate_permission_letter(data: dict) -> bytes:
     c.save(); buf.seek(0); return buf.getvalue()
 
 # ─────────────────────────────────────────────
-#  CONTRACT PDF — coordinates recalibrated against the actual template
+#  CONTRACT PDF — coordinates re-measured directly against the actual
+#  template background using the calibration-grid PDF.
 #
-#  These x/y values were re-measured directly from the printed contract
-#  template (not guessed): the calibration-grid PDF was overlaid with a
-#  fine 5pt ruler and cross-checked pixel-for-pixel against every label's
-#  blank/underline on both pages. Every row below was individually
-#  verified, which is why several values changed noticeably from the
-#  previous version (e.g. driver_name/dob moved from y=650 to y=693,
-#  license/issuing/expiry moved from y=606 to y=627, start_date moved
-#  from y=217 to y=202) — the previous numbers were placing text either
-#  on top of the label above or past the line into the row below, which
-#  is exactly the overlap you were seeing.
+#  Method: the calibration grid was exported to an image, the red 20pt
+#  ruler lines were detected pixel-by-pixel and regressed against their
+#  known point values (0,20,40,...), giving an exact pixel->point
+#  mapping for this specific template render. Every label on the clean
+#  template (Full Name, Address, License No, Ph/Email, Hire Payment,
+#  Hire Period, Hire Vehicle Details, and the page-2 header/footer) was
+#  then located in pixel space via OCR / pixel inspection and converted
+#  through that mapping. The result was test-rendered and visually
+#  checked against the template before being committed here.
 #
 #  Units: PDF points, origin (0,0) at BOTTOM-LEFT of the page,
 #  page size is 612 x 792 (US Letter).
 # ─────────────────────────────────────────────
 CONTRACT_PAGE1_FIELDS = {
-    # key:               (x,   y,   font_size)
-    "contract_no":       (400, 700, 8.0),
-    "date":               (80, 48, 8.8),    # bottom "Date:___" row, below signatures
-    "driver_name":        (120, 693, 8.8),
-    "dob":                (465, 693, 8.8),
-    "address":            (120, 676, 8.8),
-    "postcode":           (480, 676, 8.8),
-    "license_no":         (120, 627, 8.8),
-    "issuing_authority":  (330, 627, 8.8),
-    "expiry_date":        (488, 627, 8.8),
-    "phone":              (120, 598, 8.8),
-    "email":              (280, 598, 8.8),
-    "rent":               (110, 392, 8.8),   # "The Rental of £___" row
-    "rate":               (138, 354, 8.8),   # "...at the rate of ___ Pence per mile" row
-    "deposit":            (130, 332, 8.8),   # "Deposit Paid £___" row
-    "start_date":         (111, 202, 8.8),   # "Date Hire Start:" row
-    "expected_return":    (216, 182, 8.8),   # "Expected Date of Vehicle Return:" row
-    "car_make":           (85, 124, 8.8),    # "HIRE VEHICLE DETAILS" -> Make/Reg/Model row
-    "registration":       (290, 124, 8.8),
-    "car_model":          (465, 124, 8.8),
+    # key:               (x,     y,     font_size)
+    "contract_no":       (400,   700,   8.0),
+    "date":              (80,    48,    8.8),    # bottom "Date:___" row, below signatures
+    "driver_name":       (87,    656.6, 8.8),
+    "dob":               (494,   656.6, 8.8),
+    "address":           (77,    632.6, 8.8),
+    "postcode":          (467,   632.6, 8.8),
+    "license_no":        (92,    607.5, 8.8),
+    "issuing_authority":  (327,   607.5, 8.8),
+    "expiry_date":       (489,   607.5, 8.8),
+    "phone":             (60,    582.4, 8.8),
+    "email":             (283,   582.4, 8.8),
+    "rent":              (89,    383.6, 8.8),   # "The Rental of £___" row
+    "rate":              (135,   343.9, 8.8),   # "...at the rate of ___ Pence per mile" row
+    "deposit":           (107,   307.9, 8.8),   # "Deposit Paid £___" row
+    "start_date":        (108,   213.4, 8.8),   # "Date Hire Start:" row
+    "expected_return":   (185,   198.4, 8.8),   # "Expected Date of Vehicle Return:" row
+    "car_make":          (68,    133.9, 8.8),   # "HIRE VEHICLE DETAILS" -> Make/Reg/Model row
+    "registration":      (288,   133.9, 8.8),
+    "car_model":         (456,   133.9, 8.8),
 }
 CONTRACT_PAGE2_FIELDS = {
-    "contract_no":  (145, 705, 8.8),
-    "registration": (390, 705, 8.8),
-    "date":         (280, 52, 8.8),    # middle "Date:" column between the two signature lines
+    "contract_no":  (132, 767.6, 8.8),
+    "registration": (417, 767.6, 8.8),
+    "date":         (286, 25.1, 8.8),    # bottom "Date:" column between the two signature lines
 }
 CONTRACT_FIELD_MAXW = {
     "contract_no": 130,
