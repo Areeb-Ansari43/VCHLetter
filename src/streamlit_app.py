@@ -42,7 +42,12 @@ def _find_img(base_name):
         if os.path.exists(p): return p
     return None
 
-fav_path = _find_img("Screenshot_2026-06-09_230035") or "🚗"
+# If you have a hosted URL for your logo, paste it here (e.g. from a GitHub
+# raw link or image host) and it will be used as the browser tab icon
+# regardless of what files happen to be deployed alongside this script.
+FAVICON_URL = ""  # e.g. "https://raw.githubusercontent.com/you/repo/main/logo.png"
+
+fav_path = FAVICON_URL or _find_img("Screenshot_2026-06-09_230035") or "🚗"
 
 # ─────────────────────────────────────────────
 #  STREAMLIT CONFIGURATION & BRAND HIDING
@@ -521,18 +526,18 @@ CONTRACT_PAGE1_FIELDS = {
     # key:               (x,     y,     font_size)
     "contract_no":       (400,   700,   8.0),
     "date":              (80,    48,    8.8),    # bottom "Date:___" row, below signatures
-    "driver_name":       (87,    656.6, 8.8),
-    "dob":               (494,   656.6, 8.8),
-    "address":           (77,    632.6, 8.8),
-    "postcode":          (467,   632.6, 8.8),
-    "license_no":        (92,    607.5, 8.8),
-    "issuing_authority":  (327,   607.5, 8.8),
-    "expiry_date":       (489,   607.5, 8.8),
+    "driver_name":       (87,    660.5, 8.8),
+    "dob":               (494,   660.5, 8.8),
+    "address":           (77,    636.5, 8.8),
+    "postcode":          (467,   636.5, 8.8),
+    "license_no":        (92,    611.5, 8.8),
+    "issuing_authority":  (327,   611.5, 8.8),
+    "expiry_date":       (489,   611.5, 8.8),
     "phone":             (60,    582.4, 8.8),
     "email":             (283,   582.4, 8.8),
-    "rent":              (89,    383.6, 8.8),   # "The Rental of £___" row
+    "rent":              (89,    387.5, 8.8),   # "The Rental of £___" row
     "rate":              (135,   343.9, 8.8),   # "...at the rate of ___ Pence per mile" row
-    "deposit":           (107,   307.9, 8.8),   # "Deposit Paid £___" row
+    "deposit":           (107,   311.5, 8.8),   # "Deposit Paid £___" row
     "start_date":        (108,   213.4, 8.8),   # "Date Hire Start:" row
     "expected_return":   (185,   198.4, 8.8),   # "Expected Date of Vehicle Return:" row
     "car_make":          (68,    133.9, 8.8),   # "HIRE VEHICLE DETAILS" -> Make/Reg/Model row
@@ -540,9 +545,9 @@ CONTRACT_PAGE1_FIELDS = {
     "car_model":         (456,   133.9, 8.8),
 }
 CONTRACT_PAGE2_FIELDS = {
-    "contract_no":  (132, 719,  8.8),   # "CONTRACT NUMBER:" row, just under the black title banner
-    "registration": (417, 719,  8.8),   # "CAR REG:" row, same line as contract_no
-    "date":         (338, 33,   8.8),   # "Date:" slot in the bottom signature row (between the two signature lines)
+    "contract_no":  (178, 715,  8.8),   # "CONTRACT NUMBER:" row, clear of the label text, inside the grey box
+    "registration": (368, 715,  8.8),   # "CAR REG:" row, pulled left to sit close to the label
+    "date":         (345, 48,   8.8),   # "Date:" slot in the bottom signature row
 }
 CONTRACT_FIELD_MAXW = {
     "contract_no": 130,
@@ -580,7 +585,8 @@ def generate_contract(data: dict) -> bytes:
 
     if bg2: cv.drawImage(bg2, 0, 0, width=W, height=H)
     for key, (x, y, size) in CONTRACT_PAGE2_FIELDS.items():
-        _draw_fit(cv, data.get(key, ""), x, y, base_size=size, font="Helvetica-Bold")
+        _draw_fit(cv, data.get(key, ""), x, y, base_size=size, max_width=CONTRACT_FIELD_MAXW.get(key),
+                  font="Helvetica-Bold")
 
     cv.save(); buf.seek(0); return buf.getvalue()
 
