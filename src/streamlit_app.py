@@ -58,6 +58,50 @@ st.set_page_config(
     layout="centered"
 )
 
+# ─────────────────────────────────────────────
+#  BROWSER TAB TITLE — Streamlit appends " · Streamlit" to whatever
+#  page_title is set above; this forces the tab back to a clean title.
+# ─────────────────────────────────────────────
+st.markdown("""
+<script>
+(function() {
+    const desiredTitle = "FA-IBI Workspace";
+    function applyTitle() { if (document.title !== desiredTitle) document.title = desiredTitle; }
+    applyTitle();
+    const titleEl = document.querySelector('title');
+    if (titleEl) {
+        new MutationObserver(applyTitle).observe(titleEl, { childList: true });
+    }
+    setInterval(applyTitle, 500);
+})();
+</script>
+""", unsafe_allow_html=True)
+
+# ─────────────────────────────────────────────
+#  LINK-PREVIEW METADATA (best effort)
+#  NOTE: Slack/WhatsApp/Teams/etc. generate link previews by fetching the
+#  page's raw HTML with no JavaScript execution. Streamlit apps render
+#  their content client-side, so tags injected here (after the JS app
+#  boots) are usually invisible to those crawlers — this is a platform
+#  limitation, not something fixable from inside the Python script. The
+#  reliable fix is a small edge/proxy rule in front of your custom domain
+#  (e.g. a Cloudflare Worker) that serves a static HTML snippet with these
+#  tags to known bot user-agents while passing real visitors through to
+#  Streamlit. Happy to write that Worker script if xubi.org is on
+#  Cloudflare — just say the word. Leaving this block in in case your
+#  hosting setup does happen to expose it.
+# ─────────────────────────────────────────────
+st.markdown(f"""
+<meta property="og:title" content="FA-IBI Workspace" />
+<meta property="og:description" content="Driver licence scanning, permission letters, and hire contracts for FA-IBI LTD." />
+<meta property="og:image" content="{FAVICON_URL}" />
+<meta property="og:type" content="website" />
+<meta name="twitter:card" content="summary" />
+<meta name="twitter:title" content="FA-IBI Workspace" />
+<meta name="twitter:description" content="Driver licence scanning, permission letters, and hire contracts for FA-IBI LTD." />
+<meta name="twitter:image" content="{FAVICON_URL}" />
+""", unsafe_allow_html=True)
+
 st.markdown("""
 <style>
 #MainMenu {visibility: hidden;}
@@ -535,7 +579,7 @@ CONTRACT_PAGE1_FIELDS = {
     "expiry_date":       (489,   611.5, 8.8),
     "phone":             (60,    582.4, 8.8),
     "email":             (283,   582.4, 8.8),
-    "rent":              (89,    375,   8.8),   # "The Rental of £___" row
+    "rent":              (145,   375,   8.8),   # "The Rental of £___" row
     "rate":              (135,   343.9, 8.8),   # "...at the rate of ___ Pence per mile" row
     "deposit":           (107,   311.5, 8.8),   # "Deposit Paid £___" row
     "start_date":        (108,   213.4, 8.8),   # "Date Hire Start:" row
@@ -545,8 +589,8 @@ CONTRACT_PAGE1_FIELDS = {
     "car_model":         (456,   133.9, 8.8),
 }
 CONTRACT_PAGE2_FIELDS = {
-    "contract_no":  (178, 731,  8.8),   # same line as the "CONTRACT NUMBER:" label
-    "registration": (368, 731,  8.8),   # same line as the "CAR REG:" label
+    "contract_no":  (140, 719,  8.8),   # close beside the "CONTRACT NUMBER:" label
+    "registration": (350, 719,  8.8),   # close beside the "CAR REG:" label
     "date":         (300, 48,   8.8),   # "Date:" slot, kept clear of the "Owners Signature X" label
 }
 CONTRACT_FIELD_MAXW = {
