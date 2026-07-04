@@ -109,12 +109,13 @@ components.html("""
 # ─────────────────────────────────────────────
 st.markdown(f"""
 <meta property="og:title" content="FA-IBI Workspace" />
-<meta property="og:description" content="Driver licence scanning, permission letters, and hire contracts for FA-IBI LTD." />
+<meta property="og:description" content="FA-IBI LTD private hire vehicle rental — driver licence scanning, permission letters, and hire contracts generated in one place." />
 <meta property="og:image" content="{FAVICON_URL}" />
+<meta property="og:url" content="https://vchletter.xubi.org" />
 <meta property="og:type" content="website" />
 <meta name="twitter:card" content="summary" />
 <meta name="twitter:title" content="FA-IBI Workspace" />
-<meta name="twitter:description" content="Driver licence scanning, permission letters, and hire contracts for FA-IBI LTD." />
+<meta name="twitter:description" content="FA-IBI LTD private hire vehicle rental — driver licence scanning, permission letters, and hire contracts generated in one place." />
 <meta name="twitter:image" content="{FAVICON_URL}" />
 """, unsafe_allow_html=True)
 
@@ -584,7 +585,7 @@ def generate_permission_letter(data: dict) -> bytes:
 # ─────────────────────────────────────────────
 CONTRACT_PAGE1_FIELDS = {
     # key:               (x,     y,     font_size)
-    "contract_no":       (370,   694,   8.0),
+    "contract_no":       (350,   694,   8.0),
     "date":              (80,    48,    8.8),    # bottom "Date:___" row, below signatures
     "driver_name":       (87,    660.5, 8.8),
     "dob":               (494,   660.5, 8.8),
@@ -595,7 +596,7 @@ CONTRACT_PAGE1_FIELDS = {
     "expiry_date":       (489,   611.5, 8.8),
     "phone":             (60,    582.4, 8.8),
     "email":             (283,   582.4, 8.8),
-    "rent":              (110,   375,   8.8),   # "The Rental of £___" row
+    "rent":              (110,   379,   8.8),   # "The Rental of £___" row
     "rate":              (135,   343.9, 8.8),   # "...at the rate of ___ Pence per mile" row
     "deposit":           (107,   311.5, 8.8),   # "Deposit Paid £___" row
     "start_date":        (108,   213.4, 8.8),   # "Date Hire Start:" row
