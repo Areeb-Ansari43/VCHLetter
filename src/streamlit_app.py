@@ -45,7 +45,7 @@ def _find_img(base_name):
 # If you have a hosted URL for your logo, paste it here (e.g. from a GitHub
 # raw link or image host) and it will be used as the browser tab icon
 # regardless of what files happen to be deployed alongside this script.
-FAVICON_URL = ""  # e.g. "https://raw.githubusercontent.com/you/repo/main/logo.png"
+FAVICON_URL = "https://www.image2url.com/r2/default/images/1783184652671-85246cd9-4ce1-4884-b658-0eb23af3741a.png"
 
 fav_path = FAVICON_URL or _find_img("Screenshot_2026-06-09_230035") or "🚗"
 
@@ -535,7 +535,7 @@ CONTRACT_PAGE1_FIELDS = {
     "expiry_date":       (489,   611.5, 8.8),
     "phone":             (60,    582.4, 8.8),
     "email":             (283,   582.4, 8.8),
-    "rent":              (89,    387.5, 8.8),   # "The Rental of £___" row
+    "rent":              (89,    375,   8.8),   # "The Rental of £___" row
     "rate":              (135,   343.9, 8.8),   # "...at the rate of ___ Pence per mile" row
     "deposit":           (107,   311.5, 8.8),   # "Deposit Paid £___" row
     "start_date":        (108,   213.4, 8.8),   # "Date Hire Start:" row
@@ -545,9 +545,9 @@ CONTRACT_PAGE1_FIELDS = {
     "car_model":         (456,   133.9, 8.8),
 }
 CONTRACT_PAGE2_FIELDS = {
-    "contract_no":  (178, 715,  8.8),   # "CONTRACT NUMBER:" row, clear of the label text, inside the grey box
-    "registration": (368, 715,  8.8),   # "CAR REG:" row, pulled left to sit close to the label
-    "date":         (345, 48,   8.8),   # "Date:" slot in the bottom signature row
+    "contract_no":  (178, 731,  8.8),   # same line as the "CONTRACT NUMBER:" label
+    "registration": (368, 731,  8.8),   # same line as the "CAR REG:" label
+    "date":         (300, 48,   8.8),   # "Date:" slot, kept clear of the "Owners Signature X" label
 }
 CONTRACT_FIELD_MAXW = {
     "contract_no": 130,
