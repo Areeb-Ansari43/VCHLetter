@@ -42,7 +42,7 @@ def _find_img(base_name):
         if os.path.exists(p): return p
     return None
 
-fav_path = _find_img("Screenshot 2026-06-09 230035") or "🚗"
+fav_path = _find_img("Screenshot_2026-06-09_230035") or "🚗"
 
 # ─────────────────────────────────────────────
 #  STREAMLIT CONFIGURATION & BRAND HIDING
@@ -91,6 +91,42 @@ header {visibility: hidden;}
     Powered By <a href="https://virtualcarhire.pages.dev/" target="_blank" rel="noopener">&nbsp;Virtual Car Hire</a>
 </div>
 """, unsafe_allow_html=True)
+
+# ─────────────────────────────────────────────
+#  AUTO-DISMISSING NOTIFICATIONS
+#  Renders a Streamlit-alert-styled banner that visually fades out and
+#  collapses on its own after `seconds` (default 10s) using a pure CSS
+#  animation, so callers don't need to manage timers/reruns.
+# ─────────────────────────────────────────────
+def notify(message: str, kind: str = "success", seconds: int = 10):
+    palette = {
+        "success": ("#1e4620", "#3dd56d", "#d4f7d4", "✅"),
+        "info":    ("#1e3a5c", "#3d9bd5", "#d4e9f7", "ℹ️"),
+        "warning": ("#5c4a1e", "#d5a83d", "#f7ecd4", "⚠️"),
+        "error":   ("#5c1e1e", "#d53d3d", "#f7d4d4", "🚫"),
+    }
+    bg, border, fg, icon = palette.get(kind, palette["success"])
+    uid = f"fa-ibi-toast-{kind}-{abs(hash(message)) % 100000}"
+    st.markdown(f"""
+    <style>
+    @keyframes {uid}-fade {{
+        0%   {{ opacity: 1; max-height: 200px; margin-bottom: 1rem; padding: 0.75rem 1rem; }}
+        85%  {{ opacity: 1; max-height: 200px; margin-bottom: 1rem; padding: 0.75rem 1rem; }}
+        100% {{ opacity: 0; max-height: 0;   margin-bottom: 0;    padding: 0 1rem; }}
+    }}
+    #{uid} {{
+        background-color: {bg};
+        border: 1px solid {border};
+        color: {fg};
+        border-radius: 8px;
+        overflow: hidden;
+        font-size: 14px;
+        line-height: 1.4;
+        animation: {uid}-fade {seconds}s ease forwards;
+    }}
+    </style>
+    <div id="{uid}">{icon} {message}</div>
+    """, unsafe_allow_html=True)
 
 # ─────────────────────────────────────────────
 #  REAL COOKIE-BASED AUTH (no URL params, no full-page reload hacks)
@@ -504,9 +540,9 @@ CONTRACT_PAGE1_FIELDS = {
     "car_model":         (456,   133.9, 8.8),
 }
 CONTRACT_PAGE2_FIELDS = {
-    "contract_no":  (132, 767.6, 8.8),
-    "registration": (417, 767.6, 8.8),
-    "date":         (286, 25.1, 8.8),    # bottom "Date:" column between the two signature lines
+    "contract_no":  (132, 719,  8.8),   # "CONTRACT NUMBER:" row, just under the black title banner
+    "registration": (417, 719,  8.8),   # "CAR REG:" row, same line as contract_no
+    "date":         (338, 33,   8.8),   # "Date:" slot in the bottom signature row (between the two signature lines)
 }
 CONTRACT_FIELD_MAXW = {
     "contract_no": 130,
@@ -585,7 +621,7 @@ if not st.session_state.authenticated:
                 )
             st.rerun()
         else:
-            st.error("Invalid Security Verification Pin Code")
+            notify("Invalid Security Verification Pin Code", "error")
     st.stop()
 
 with st.sidebar:
@@ -603,8 +639,10 @@ for k, v in dict(ocr_name="", ocr_licence="", ocr_address="", ocr_postcode="", o
 
 st.title("FA-IBI Workspace")
 st.markdown("### 🎛️ Shared Data Automation Panel")
-if st.session_state.scan_msg: st.success(st.session_state.scan_msg)
-if st.session_state.fleet_msg: st.info(st.session_state.fleet_msg)
+if st.session_state.scan_msg:
+    notify(st.session_state.scan_msg, "warning" if st.session_state.scan_msg.startswith("⚠️") else "success")
+if st.session_state.fleet_msg:
+    notify(st.session_state.fleet_msg, "info")
 col_scan, col_fleet = st.columns(2)
 
 with col_scan:
@@ -678,7 +716,7 @@ with tab2:
                             file_name="Calibration_Grid.pdf", mime="application/pdf", key="dl_cal_btn")
 
     if st.session_state.contract_pdf:
-        st.success(f"🎉 Contract PDF Created Successfully!")
+        notify("🎉 Contract PDF Created Successfully!", "success")
         st.download_button("📥 Download Generated Contract PDF", data=st.session_state.contract_pdf, file_name=f"Contract_{st.session_state.contract_no}.pdf", mime="application/pdf", key="dl_contract_btn")
         st.markdown("---")
     with st.form("contract_form"):
