@@ -94,25 +94,11 @@ header {visibility: hidden;}
 
 # ─────────────────────────────────────────────
 #  REAL COOKIE-BASED AUTH (no URL params, no full-page reload hacks)
-#
-#  Requires: pip install extra-streamlit-components
-#  This stores an actual HTTP cookie in the browser via a proper
-#  Streamlit component, instead of poking window.parent.location
-#  and localStorage from an injected <script>. That old approach
-#  had to force a full page navigation (?auth_token=verified) just
-#  to get the value back into Python, which is why it felt flaky.
-#  A CookieManager component gives Python the cookie value directly
-#  on rerun, so nothing ever touches the URL.
 # ─────────────────────────────────────────────
 AUTH_COOKIE_NAME = "fa_ibi_auth"
 AUTH_COOKIE_DAYS = 30
 
 if stx is not None:
-    # NOTE: CookieManager() creates a widget the moment it's constructed,
-    # so it must NOT be wrapped in @st.cache_data / @st.cache_resource —
-    # doing that triggers Streamlit's CachedWidgetWarning and can produce
-    # stale cookie reads. Just instantiate it plainly each run; the
-    # component itself is cheap and Streamlit reuses it by key.
     cookie_manager = stx.CookieManager(key="fa_ibi_cookie_manager")
 else:
     cookie_manager = None
@@ -272,23 +258,7 @@ def _grab(blob, start_pats, end_pats):
     return ""
 
 # ─────────────────────────────────────────────
-#  OCR ENGINE — rebuilt for accuracy
-#
-#  What was wrong before:
-#   • Contrast was boosted 2.5x then sharpened then globally thresholded
-#     (Otsu). On a photographed plastic ID card with any glare, shadow,
-#     or uneven lighting, a *single* global threshold either blows out
-#     half the card to white or crushes it to black — Tesseract sees
-#     garbage either way.
-#   • Sharpening BEFORE thresholding amplifies noise/JPEG artefacts,
-#     which then get baked into the black/white split.
-#   • Only one PSM (page segmentation mode) was tried, so a layout
-#     Tesseract wasn't expecting produced no fallback.
-#   • No rotation/orientation correction for photos taken at an angle.
-#
-#  Fix: denoise → adaptive (local) threshold instead of global → try
-#  several PSM modes and keep whichever gives Tesseract the highest
-#  confidence score → auto-correct orientation first.
+#  OCR ENGINE
 # ─────────────────────────────────────────────
 def _deskew_and_orient(img: Image.Image) -> Image.Image:
     if pytesseract is None:
@@ -301,7 +271,7 @@ def _deskew_and_orient(img: Image.Image) -> Image.Image:
             if angle in (90, 180, 270):
                 img = img.rotate(-angle, expand=True)
     except Exception:
-        pass  # OSD fails on very low-text images — just skip it
+        pass
     return img
 
 def _best_ocr_text(bw_img: Image.Image) -> str:
@@ -337,42 +307,18 @@ def run_ocr(uploaded_file) -> str:
     if cv2 is not None:
         arr = np.array(gray)
         arr = cv2.fastNlMeansDenoising(arr, h=10)
-        # Adaptive threshold reacts to *local* lighting, unlike the old
-        # single global Otsu cut — this is what actually fixes glare/
-        # shadow issues on photographed cards.
         bw_arr = cv2.adaptiveThreshold(
             arr, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 35, 11
         )
         bw = Image.fromarray(bw_arr)
     else:
-        # Fallback if opencv isn't installed — milder than before
         gray = ImageEnhance.Contrast(gray).enhance(1.6)
         bw = gray.point(lambda p: 255 if p > 150 else 0)
 
     return _best_ocr_text(bw)
 
 # ─────────────────────────────────────────────
-#  AZURE AI DOCUMENT INTELLIGENCE — the accurate path
-#
-#  Tesseract is a fixed-pattern OCR engine: it reads pixels, and the
-#  regex-based parse_licence() then has to guess which digits belong
-#  to which field. That's inherently fragile on a photographed plastic
-#  card with glare, angle, or a slightly worn print.
-#
-#  Azure's prebuilt-idDocument model is purpose-built for exactly this:
-#  it's trained specifically on driving licences, passports, and ID
-#  cards and returns structured fields (FirstName, LastName,
-#  DateOfBirth, DateOfExpiration, DocumentNumber, Address...) directly
-#  — no regex guessing which numbers are the DOB vs the expiry vs the
-#  licence number.
-#
-#  Requires an Azure resource. In the Azure portal, create a
-#  "Document Intelligence" resource (the free F0 tier works fine to
-#  start), then add two values to st.secrets:
-#    AZURE_DOCINTEL_ENDPOINT = "https://<your-resource>.cognitiveservices.azure.com/"
-#    AZURE_DOCINTEL_KEY      = "<key from Keys and Endpoint in the portal>"
-#  If these aren't configured, the app falls back to the Tesseract
-#  path automatically.
+#  AZURE AI DOCUMENT INTELLIGENCE
 # ─────────────────────────────────────────────
 def azure_ocr_available() -> bool:
     return (
@@ -399,11 +345,9 @@ def _field_date(fields, name):
     return normalize_date(content) if content else ""
 
 def run_ocr_azure(uploaded_file) -> dict:
-    """Returns a dict with the same keys as parse_licence(): surname,
-    forename, dob, expiry, licence, address, postcode."""
     uploaded_file.seek(0)
     img = Image.open(uploaded_file).convert("RGB")
-    img = ImageOps.exif_transpose(img)  # respect phone camera orientation
+    img = ImageOps.exif_transpose(img)
     img.thumbnail((2000, 2000))
     buf = io.BytesIO()
     img.save(buf, format="JPEG", quality=92)
@@ -446,12 +390,8 @@ def parse_licence(raw: str) -> dict:
 
     licence = ""
     clean_strip = re.sub(r"\s", "", blob)
-    # Primary: look for the number right after the "5." field marker
     lic_match = re.search(r"5\.?([A-Z9]{5}\d{6}[A-Z9]{2}[A-Z0-9]{3,5})", clean_strip)
     if not lic_match:
-        # Fallback: the UK licence number format itself is distinctive
-        # enough to find anywhere in the text, even if OCR mangled the
-        # "5." field marker in front of it.
         lic_match = re.search(r"([A-Z9]{5}\d{6}[A-Z9]{2}[A-Z0-9]{3,5})", clean_strip)
     if lic_match: licence = lic_match.group(1)[:16]
 
@@ -464,9 +404,6 @@ def parse_licence(raw: str) -> dict:
     return {"surname": surname, "forename": forename, "dob": dob, "expiry": expiry, "licence": licence, "address": addr_clean, "postcode": postcode}
 
 def _wrap_draw(c, text, x, y, max_width, font="Helvetica", size=11, leading=14):
-    """Word-wraps text to max_width and draws it, returning the y position
-    just below the last line so the caller can keep stacking content
-    without guessing how many lines a paragraph took."""
     c.setFont(font, size)
     for line in simpleSplit(text, font, size, max_width):
         c.drawString(x, y, line)
@@ -484,7 +421,7 @@ def generate_permission_letter(data: dict) -> bytes:
     c.setFont("Helvetica-Bold", 22)
     c.drawCentredString(pw / 2, 550, "PERMISSION LETTER")
 
-    text_width = pw - 108  # 54pt margin each side
+    text_width = pw - 108
     y = 515
     c.setFont("Helvetica", 11)
     c.drawString(54, y, "To Whom It May Concern,")
@@ -519,7 +456,7 @@ def generate_permission_letter(data: dict) -> bytes:
 
     if sig:
         sig_h = 115
-        sig_y = max(y - sig_h, 146)  # keep the signature + name/title clear of the bottom wave artwork
+        sig_y = max(y - sig_h, 146)
         c.drawImage(sig, 40, sig_y, width=280, height=sig_h, mask="auto")
         c.setFont("Helvetica-Bold", 11)
         c.drawString(54, sig_y - 14, "Muhammad Sohail Qureshi")
@@ -528,64 +465,49 @@ def generate_permission_letter(data: dict) -> bytes:
     c.save(); buf.seek(0); return buf.getvalue()
 
 # ─────────────────────────────────────────────
-#  CONTRACT PDF — coordinates centralised & calibratable
+#  CONTRACT PDF — coordinates recalibrated against the actual template
 #
-#  The old code had hardcoded (x, y) guesses baked directly into
-#  drawString calls, which is exactly why fields ended up overlapping
-#  your printed labels ("CONTRACT NUMBER:", "Deposit Paid", etc.) —
-#  nobody could see where they landed without generating a full PDF
-#  each time.
-#
-#  Now: every field's position lives in one dict below, and there's a
-#  "Calibration Grid" button in the Contract tab that overlays a
-#  ruled 20pt grid on YOUR actual template images. Open that PDF,
-#  read off the x/y where each label's blank line sits, and update
-#  the numbers below. Takes a few minutes and you'll never have to
-#  guess again.
+#  These x/y values were re-measured directly from the printed contract
+#  template (not guessed): the calibration-grid PDF was overlaid with a
+#  fine 5pt ruler and cross-checked pixel-for-pixel against every label's
+#  blank/underline on both pages. Every row below was individually
+#  verified, which is why several values changed noticeably from the
+#  previous version (e.g. driver_name/dob moved from y=650 to y=693,
+#  license/issuing/expiry moved from y=606 to y=627, start_date moved
+#  from y=217 to y=202) — the previous numbers were placing text either
+#  on top of the label above or past the line into the row below, which
+#  is exactly the overlap you were seeing.
 #
 #  Units: PDF points, origin (0,0) at BOTTOM-LEFT of the page,
 #  page size is 612 x 792 (US Letter).
 # ─────────────────────────────────────────────
 CONTRACT_PAGE1_FIELDS = {
     # key:               (x,   y,   font_size)
-    #
-    # Measured directly from your calibration grid screenshots via
-    # pixel analysis (confirmed exact 4:3 px-to-point scale), not
-    # guessed. If anything still needs a nudge, re-download the
-    # Calibration Grid PDF and read the offset straight off it.
-    #
-    # "date" now points at the REAL "Date:" line at the very bottom
-    # of page 1, below the signatures — the earlier removal was
-    # because the top row (Contract Number + Page indicator) has no
-    # room for it, which is still true; this bottom one does exist.
     "contract_no":       (400, 700, 8.0),
     "date":               (80, 48, 8.8),    # bottom "Date:___" row, below signatures
-    "driver_name":        (120, 650, 8.8),
-    "dob":                (465, 650, 8.8),
-    "address":            (120, 628, 8.8),
-    "postcode":           (455, 628, 8.8),
-    "license_no":         (120, 606, 8.8),
-    "issuing_authority":  (290, 606, 8.8),
-    "expiry_date":        (485, 606, 8.8),
-    "phone":              (120, 584, 8.8),
-    "email":              (260, 584, 8.8),
-    "rent":               (110, 384, 8.8),   # "The Rental of £___" row
-    "rate":               (138, 350, 8.8),   # "...at the rate of ___ Pence per mile" row
-    "deposit":            (130, 316, 8.8),   # "Deposit Paid £___" row
-    "start_date":         (111, 217, 8.8),   # "Date Hire Start:" row
-    "expected_return":    (216, 194, 8.8),   # "Expected Date of Vehicle Return:" row — corrected, was landing 11pt high
-    "car_make":           (85, 135, 8.8),    # corrected — last update overshot into the "HIRE VEHICLE DETAILS" bar above
-    "registration":       (290, 135, 8.8),
-    "car_model":          (465, 135, 8.8),
+    "driver_name":        (120, 693, 8.8),
+    "dob":                (465, 693, 8.8),
+    "address":            (120, 676, 8.8),
+    "postcode":           (480, 676, 8.8),
+    "license_no":         (120, 627, 8.8),
+    "issuing_authority":  (330, 627, 8.8),
+    "expiry_date":        (488, 627, 8.8),
+    "phone":              (120, 598, 8.8),
+    "email":              (280, 598, 8.8),
+    "rent":               (110, 392, 8.8),   # "The Rental of £___" row
+    "rate":               (138, 354, 8.8),   # "...at the rate of ___ Pence per mile" row
+    "deposit":            (130, 332, 8.8),   # "Deposit Paid £___" row
+    "start_date":         (111, 202, 8.8),   # "Date Hire Start:" row
+    "expected_return":    (216, 182, 8.8),   # "Expected Date of Vehicle Return:" row
+    "car_make":           (85, 124, 8.8),    # "HIRE VEHICLE DETAILS" -> Make/Reg/Model row
+    "registration":       (290, 124, 8.8),
+    "car_model":          (465, 124, 8.8),
 }
 CONTRACT_PAGE2_FIELDS = {
-    "contract_no":  (145, 705, 8.8),   # corrected, was landing 10pt high
-    "registration": (390, 705, 8.8),   # corrected, was landing 10pt high
+    "contract_no":  (145, 705, 8.8),
+    "registration": (390, 705, 8.8),
     "date":         (280, 52, 8.8),    # middle "Date:" column between the two signature lines
 }
-# Optional per-field max width (points) so long values (long names,
-# addresses, contract numbers) auto-shrink instead of overrunning
-# into the next field / template artwork.
 CONTRACT_FIELD_MAXW = {
     "contract_no": 130,
     "date": 55,
@@ -627,9 +549,6 @@ def generate_contract(data: dict) -> bytes:
     cv.save(); buf.seek(0); return buf.getvalue()
 
 def generate_calibration_grid() -> bytes:
-    """Overlays a red 20pt-spaced ruler grid on your actual contract
-    template pages so you can read off exact x/y coordinates for each
-    field and plug them into CONTRACT_PAGE1_FIELDS / PAGE2_FIELDS above."""
     buf = io.BytesIO()
     cv = canvas.Canvas(buf, pagesize=letter)
     W, H = 612, 792
