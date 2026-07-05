@@ -585,7 +585,7 @@ def generate_permission_letter(data: dict) -> bytes:
 # ─────────────────────────────────────────────
 CONTRACT_PAGE1_FIELDS = {
     # key:               (x,     y,     font_size)
-    "contract_no":       (350,   694,   8.0),
+    "contract_no":       (335,   696,   8.0),
     "date":              (80,    48,    8.8),    # bottom "Date:___" row, below signatures
     "driver_name":       (87,    660.5, 8.8),
     "dob":               (494,   660.5, 8.8),
@@ -619,6 +619,30 @@ CONTRACT_FIELD_MAXW = {
     "car_model": 130,
 }
 
+# ─────────────────────────────────────────────
+#  OWNER SIGNATURES
+#  Add a new entry here whenever a new employee's signature image is
+#  dropped into the project folder (same folder as this script). The
+#  dropdown label is what shows up in the form; the value is the base
+#  filename (without extension) that _find_img() will look for.
+# ─────────────────────────────────────────────
+SIGNATURE_FILES = {
+    "Sohail's Signature": "signature",         # signature.png, already in the project folder
+    "Rizwan's Signature": "Rizwan_Signature",  # Rizwan_Signature.png — background removed, cropped tight
+}
+SIGNATURE_OPTIONS = ["-- No Signature --"] + list(SIGNATURE_FILES.keys())
+
+# Where the signature image gets stamped on each page (PDF points,
+# origin bottom-left) — sized to sit neatly on the "Owners Signature X:"
+# line without overlapping the label or the blank line beneath it.
+# Signatures are scaled to FIT inside this box while keeping their own
+# aspect ratio (see _stamp_signature), so tall/narrow and wide/short
+# signatures both look correct without being squashed or stretched.
+SIGNATURE_PLACEMENT = {
+    1: {"x": 452, "y": 62, "width": 70, "height": 26},   # page 1, bottom signature row
+    2: {"x": 454, "y": 40, "width": 50, "height": 20},   # page 2, bottom signature row (narrower column)
+}
+
 def _draw_fit(c, text, x, y, base_size=8.8, max_width=None, font="Helvetica"):
     text = str(text)
     if not text:
@@ -629,6 +653,28 @@ def _draw_fit(c, text, x, y, base_size=8.8, max_width=None, font="Helvetica"):
             size -= 0.3
     c.setFont(font, size)
     c.drawString(x, y, text)
+
+def _stamp_signature(cv, signature_label: str, page: int):
+    filename = SIGNATURE_FILES.get(signature_label)
+    if not filename:
+        return
+    sig_path = _find_img(filename)
+    if not sig_path:
+        return
+    spot = SIGNATURE_PLACEMENT.get(page)
+    if not spot:
+        return
+    box_w, box_h = spot["width"], spot["height"]
+    try:
+        with Image.open(sig_path) as im:
+            iw, ih = im.size
+        scale = min(box_w / iw, box_h / ih)
+        draw_w, draw_h = iw * scale, ih * scale
+    except Exception:
+        draw_w, draw_h = box_w, box_h
+    x = spot["x"] + (box_w - draw_w) / 2
+    y = spot["y"] + (box_h - draw_h) / 2
+    cv.drawImage(sig_path, x, y, width=draw_w, height=draw_h, mask="auto")
 
 def generate_contract(data: dict) -> bytes:
     buf = io.BytesIO()
@@ -642,12 +688,14 @@ def generate_contract(data: dict) -> bytes:
         cv.setFont("Helvetica-Bold" if key in ("contract_no", "rent", "rate", "deposit", "car_make", "registration", "car_model") else "Helvetica", size)
         _draw_fit(cv, data.get(key, ""), x, y, base_size=size, max_width=CONTRACT_FIELD_MAXW.get(key),
                   font="Helvetica-Bold" if key in ("contract_no", "rent", "rate", "deposit", "car_make", "registration", "car_model") else "Helvetica")
+    _stamp_signature(cv, data.get("owner_signature", ""), page=1)
     cv.showPage()
 
     if bg2: cv.drawImage(bg2, 0, 0, width=W, height=H)
     for key, (x, y, size) in CONTRACT_PAGE2_FIELDS.items():
         _draw_fit(cv, data.get(key, ""), x, y, base_size=size, max_width=CONTRACT_FIELD_MAXW.get(key),
                   font="Helvetica-Bold")
+    _stamp_signature(cv, data.get("owner_signature", ""), page=2)
 
     cv.save(); buf.seek(0); return buf.getvalue()
 
@@ -804,7 +852,9 @@ with tab2:
         with pv1: c_mk = st.text_input("Make", value=st.session_state.sel_make)
         with pv2: c_rv = st.text_input("Reg", value=st.session_state.sel_reg)
         with pv3: c_mv = st.text_input("Model", value=st.session_state.sel_model)
+        st.markdown("---")
+        c_sig = st.selectbox("✍️ Owner Signature", SIGNATURE_OPTIONS)
         go_c = st.form_submit_button("🖨️ Generate 2-Page Contract PDF", type="primary")
     if go_c:
-        st.session_state.pending_contract = {"contract_no": c_no.strip().upper() or "N/A", "date": c_date.strftime("%d/%m/%Y"), "driver_name": c_name.strip().upper(), "address": c_addr.strip().upper(), "postcode": c_post.strip().upper(), "dob": c_dob.strip(), "license_no": c_lic.strip().upper(), "expiry_date": c_exp.strip(), "issuing_authority": c_auth.strip().upper(), "phone": c_ph.strip(), "email": c_em.strip().upper(), "rent": c_rent.strip(), "rate": c_rate.strip(), "deposit": c_dep.strip(), "start_date": c_st.strftime("%d/%m/%Y"), "expected_return": c_ret.strftime("%d/%m/%Y"), "registration": format_uk_reg(c_rv), "car_make": c_mk.strip().upper(), "car_model": c_mv.strip().upper()}
+        st.session_state.pending_contract = {"contract_no": c_no.strip().upper() or "N/A", "date": c_date.strftime("%d/%m/%Y"), "driver_name": c_name.strip().upper(), "address": c_addr.strip().upper(), "postcode": c_post.strip().upper(), "dob": c_dob.strip(), "license_no": c_lic.strip().upper(), "expiry_date": c_exp.strip(), "issuing_authority": c_auth.strip().upper(), "phone": c_ph.strip(), "email": c_em.strip().upper(), "rent": c_rent.strip(), "rate": c_rate.strip(), "deposit": c_dep.strip(), "start_date": c_st.strftime("%d/%m/%Y"), "expected_return": c_ret.strftime("%d/%m/%Y"), "registration": format_uk_reg(c_rv), "car_make": c_mk.strip().upper(), "car_model": c_mv.strip().upper(), "owner_signature": c_sig}
         st.rerun()
