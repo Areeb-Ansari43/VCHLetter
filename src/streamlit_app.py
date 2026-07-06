@@ -627,8 +627,8 @@ CONTRACT_FIELD_MAXW = {
 #  filename (without extension) that _find_img() will look for.
 # ─────────────────────────────────────────────
 SIGNATURE_FILES = {
-    "Sohail's Signature": "signature",         # signature.png, already in the project folder
-    "Rizwan's Signature": "Rizwan_Signature",  # Rizwan_Signature.png — background removed, cropped tight
+    "Sohail's Signature": "Sohails_Signature",  # Sohails_Signature.png — background removed, cropped tight
+    "Rizwan's Signature": "Rizwan_Signature",   # Rizwan_Signature.png — background removed, cropped tight
 }
 SIGNATURE_OPTIONS = ["-- No Signature --"] + list(SIGNATURE_FILES.keys())
 
@@ -639,8 +639,8 @@ SIGNATURE_OPTIONS = ["-- No Signature --"] + list(SIGNATURE_FILES.keys())
 # aspect ratio (see _stamp_signature), so tall/narrow and wide/short
 # signatures both look correct without being squashed or stretched.
 SIGNATURE_PLACEMENT = {
-    1: {"x": 452, "y": 62, "width": 70, "height": 26},   # page 1, bottom signature row
-    2: {"x": 454, "y": 40, "width": 50, "height": 20},   # page 2, bottom signature row (narrower column)
+    1: {"x": 448, "y": 58, "width": 95, "height": 34},   # page 1, bottom signature row
+    2: {"x": 452, "y": 36, "width": 62, "height": 26},   # page 2, bottom signature row (narrower column)
 }
 
 def _draw_fit(c, text, x, y, base_size=8.8, max_width=None, font="Helvetica"):
