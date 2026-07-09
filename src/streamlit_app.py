@@ -629,6 +629,7 @@ CONTRACT_FIELD_MAXW = {
 SIGNATURE_FILES = {
     "Sohail's Signature": "Sohails_Signature",  # Sohails_Signature.png — background removed, cropped tight
     "Rizwan's Signature": "Rizwan_Signature",   # Rizwan_Signature.png — background removed, cropped tight
+    "FA-IBI Signature":   "FA-IBI_Signature",   # FA-IBI_Signature.png — background removed, cropped tight
 }
 SIGNATURE_OPTIONS = ["-- No Signature --"] + list(SIGNATURE_FILES.keys())
 
