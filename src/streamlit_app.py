@@ -609,17 +609,18 @@ def generate_permission_letter(data: dict) -> bytes:
     y -= 15
     c.drawString(54, y, "Hire end date    :"); c.drawString(160, y, data["end_date"])
     y -= 12
-    c.drawString(54, y, "Regards,")
-    y -= 13
 
     if sig:
         sig_h = 115
-        sig_y = max(y - sig_h, 146)
+        sig_y = max(y - sig_h - 24, 120)
+        c.drawString(54, sig_y + sig_h + 10, "Regards,")
         c.drawImage(sig, -20, sig_y, width=280, height=sig_h, mask="auto")
         c.setFont("Helvetica-Bold", 11)
         c.drawString(54, sig_y - 14, "Muhammad Sohail Qureshi")
         c.setFont("Helvetica", 11)
         c.drawString(54, sig_y - 28, "Director (FA-IBI LTD)")
+    else:
+        c.drawString(54, y, "Regards,")
     c.save(); buf.seek(0); return buf.getvalue()
 
 # ─────────────────────────────────────────────
