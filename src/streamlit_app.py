@@ -342,7 +342,8 @@ def strip_address_noise(s: str) -> str:
     s = re.sub(r"\bDVLA\b|\bDVLNI\b", "", s)
     s = re.sub(r"\b\d{1,2}\s+\d{1,2}\s+\d{2,4}\b", " ", s)
     s = re.sub(r"\b\d{5,}\b", " ", s)
-    s = re.sub(r"\b[1-9][ABCDE58]?\.?\s*", " ", s)
+    # Remove OCR field markers such as "8." without stripping a house number.
+    s = re.sub(r"(?<!\w)[1-9](?:[ABCDE58])?\.\s*", " ", s)
     s = re.sub(r"[^A-Z0-9 ,'\-]", " ", s)
     s = re.sub(r"\s+", " ", s).strip().strip(",").strip()
     return s
@@ -350,6 +351,25 @@ def strip_address_noise(s: str) -> str:
 def extract_postcode(text: str) -> str:
     m = re.search(r"\b([A-Z]{1,2}[0-9][A-Z0-9]?\s*[0-9][A-Z]{2})\b", text.upper())
     return m.group(1).strip() if m else ""
+
+def normalize_address(s: str) -> str:
+    """Keep the scanned address on one clean line for every downstream document."""
+    if not s:
+        return ""
+    s = str(s).upper().replace("\r", " ").replace("\n", " ").replace("\u200b", " ")
+    s = re.sub(r"\s+", " ", s)
+    s = re.sub(r"\s*,\s*", ", ", s)
+    return s.strip(" ,")
+
+
+def normalize_license_number(s: str) -> str:
+    """Normalize a UK licence number to its canonical 16-character identifier."""
+    compact = re.sub(r"[^A-Z0-9]", "", str(s or "").upper())
+    match = re.search(r"[A-Z9]{5}\d{6}[A-Z9]{2}[A-Z0-9]{3,5}", compact)
+    if match:
+        return match.group(0)[:16]
+    return compact
+
 
 def _grab(blob, start_pats, end_pats):
     for sp in start_pats:
@@ -478,8 +498,8 @@ def run_ocr_azure(uploaded_file) -> dict:
         "forename": _field_str(fields, "FirstName").upper(),
         "dob": _field_date(fields, "DateOfBirth"),
         "expiry": _field_date(fields, "DateOfExpiration"),
-        "licence": _field_str(fields, "DocumentNumber").upper(),
-        "address": address_no_postcode.upper(),
+        "licence": normalize_license_number(_field_str(fields, "DocumentNumber")),
+        "address": normalize_address(address_no_postcode),
         "postcode": postcode.upper(),
     }
 
@@ -495,13 +515,16 @@ def parse_licence(raw: str) -> dict:
     lic_match = re.search(r"5\.?([A-Z9]{5}\d{6}[A-Z9]{2}[A-Z0-9]{3,5})", clean_strip)
     if not lic_match:
         lic_match = re.search(r"([A-Z9]{5}\d{6}[A-Z9]{2}[A-Z0-9]{3,5})", clean_strip)
-    if lic_match: licence = lic_match.group(1)[:16]
+    if lic_match: licence = normalize_license_number(lic_match.group(1))
 
     raw_8 = _grab(blob, [r"8\."], [r"9\."]) or (re.search(r"8\.\s*(.*?)(?=\s*9\.)", blob, re.DOTALL).group(1).strip() if re.search(r"8\.\s*(.*?)(?=\s*9\.)", blob, re.DOTALL) else blob)
-    postcode = extract_postcode(raw_8)
+    raw_9_match = re.search(r"9\.\s*(.*?)(?=\s*10\.|$)", blob, re.DOTALL)
+    raw_9 = raw_9_match.group(1).strip() if raw_9_match else ""
+    postcode = extract_postcode(raw_8) or extract_postcode(raw_9)
     addr_clean = strip_address_noise(raw_8.replace(licence, ""))
     if postcode: addr_clean = re.sub(re.escape(postcode), "", addr_clean, flags=re.I)
     addr_clean = re.sub(r"^[0-9A-Z]{1,2}\b\.?\s*", "", addr_clean.strip()).strip(", ").strip()
+    addr_clean = normalize_address(addr_clean)
 
     return {"surname": surname, "forename": forename, "dob": dob, "expiry": expiry, "licence": licence, "address": addr_clean, "postcode": postcode}
 
@@ -511,6 +534,28 @@ def _wrap_draw(c, text, x, y, max_width, font="Helvetica", size=11, leading=14):
         c.drawString(x, y, line)
         y -= leading
     return y
+
+def _wrap_draw_bold_token(c, text, token, x, y, max_width, size=11, leading=14):
+    """Wrap text while rendering one exact token in bold."""
+    lines = simpleSplit(text, "Helvetica", size, max_width)
+    for line in lines:
+        token_start = line.find(token) if token else -1
+        if token_start < 0:
+            c.setFont("Helvetica", size)
+            c.drawString(x, y, line)
+        else:
+            before, after = line[:token_start], line[token_start + len(token):]
+            before_width = stringWidth(before, "Helvetica", size)
+            token_width = stringWidth(token, "Helvetica-Bold", size)
+            c.setFont("Helvetica", size)
+            c.drawString(x, y, before)
+            c.setFont("Helvetica-Bold", size)
+            c.drawString(x + before_width, y, token)
+            c.setFont("Helvetica", size)
+            c.drawString(x + before_width + token_width, y, after)
+        y -= leading
+    return y
+
 
 def generate_permission_letter(data: dict) -> bytes:
     buf = io.BytesIO()
@@ -529,12 +574,13 @@ def generate_permission_letter(data: dict) -> bytes:
     c.drawString(54, y, "To Whom It May Concern,")
     y -= 25
 
+    policy_number = str(data.get("insurance_policy", "")).strip().upper()
     confirm_text = (
         f"We confirm that the below vehicle can be used for the carriage of "
         f"passengers for hire and reward by prior appointments (private hire) "
-        f"as specified on insurance policy: {data['insurance_policy']}"
+        f"as specified on insurance policy: {policy_number}"
     )
-    y = _wrap_draw(c, confirm_text, 54, y, text_width)
+    y = _wrap_draw_bold_token(c, confirm_text, policy_number, 54, y, text_width)
     y -= 4
 
     auth_text = (
@@ -546,7 +592,7 @@ def generate_permission_letter(data: dict) -> bytes:
     y -= 18
 
     c.setFont("Helvetica", 11)
-    for label, val in [("Vehicle Registration", data["registration"]), ("Make and Model", data["make_model"]), ("Driver Name", data["driver_name"]), ("Address", data["address"]), ("Driving Licence No", data["license_no"])]:
+    for label, val in [("Vehicle Registration", data["registration"]), ("Make and Model", data["make_model"]), ("Driver Name", data["driver_name"]), ("Address", normalize_address(data["address"])), ("Driving Licence No", data["license_no"])]:
         c.drawString(54, y, f"{label} :"); c.drawString(180, y, val)
         y -= 22
     y -= 18
@@ -559,7 +605,7 @@ def generate_permission_letter(data: dict) -> bytes:
     if sig:
         sig_h = 115
         sig_y = max(y - sig_h, 146)
-        c.drawImage(sig, 40, sig_y, width=280, height=sig_h, mask="auto")
+        c.drawImage(sig, -20, sig_y, width=280, height=sig_h, mask="auto")
         c.setFont("Helvetica-Bold", 11)
         c.drawString(54, sig_y - 14, "Muhammad Sohail Qureshi")
         c.setFont("Helvetica", 11)
@@ -640,8 +686,8 @@ SIGNATURE_OPTIONS = ["-- No Signature --"] + list(SIGNATURE_FILES.keys())
 # aspect ratio (see _stamp_signature), so tall/narrow and wide/short
 # signatures both look correct without being squashed or stretched.
 SIGNATURE_PLACEMENT = {
-    1: {"x": 448, "y": 58, "width": 95, "height": 34},   # page 1, bottom signature row
-    2: {"x": 452, "y": 36, "width": 62, "height": 26},   # page 2, bottom signature row (narrower column)
+    1: {"x": 448, "y": 64, "width": 95, "height": 34},   # page 1, raised slightly for clarity
+    2: {"x": 452, "y": 42, "width": 62, "height": 26},   # page 2, raised slightly for clarity
 }
 
 def _draw_fit(c, text, x, y, base_size=8.8, max_width=None, font="Helvetica"):
@@ -687,7 +733,8 @@ def generate_contract(data: dict) -> bytes:
     cv.setFont("Helvetica-Bold", 8.8)
     for key, (x, y, size) in CONTRACT_PAGE1_FIELDS.items():
         cv.setFont("Helvetica-Bold" if key in ("contract_no", "rent", "rate", "deposit", "car_make", "registration", "car_model") else "Helvetica", size)
-        _draw_fit(cv, data.get(key, ""), x, y, base_size=size, max_width=CONTRACT_FIELD_MAXW.get(key),
+        value = normalize_address(data.get(key, "")) if key == "address" else data.get(key, "")
+        _draw_fit(cv, value, x, y, base_size=size, max_width=CONTRACT_FIELD_MAXW.get(key),
                   font="Helvetica-Bold" if key in ("contract_no", "rent", "rate", "deposit", "car_make", "registration", "car_model") else "Helvetica")
     _stamp_signature(cv, data.get("owner_signature", ""), page=1)
     cv.showPage()
@@ -857,5 +904,5 @@ with tab2:
         c_sig = st.selectbox("✍️ Owner Signature", SIGNATURE_OPTIONS)
         go_c = st.form_submit_button("🖨️ Generate 2-Page Contract PDF", type="primary")
     if go_c:
-        st.session_state.pending_contract = {"contract_no": c_no.strip().upper() or "N/A", "date": c_date.strftime("%d/%m/%Y"), "driver_name": c_name.strip().upper(), "address": c_addr.strip().upper(), "postcode": c_post.strip().upper(), "dob": c_dob.strip(), "license_no": c_lic.strip().upper(), "expiry_date": c_exp.strip(), "issuing_authority": c_auth.strip().upper(), "phone": c_ph.strip(), "email": c_em.strip().upper(), "rent": c_rent.strip(), "rate": c_rate.strip(), "deposit": c_dep.strip(), "start_date": c_st.strftime("%d/%m/%Y"), "expected_return": c_ret.strftime("%d/%m/%Y"), "registration": format_uk_reg(c_rv), "car_make": c_mk.strip().upper(), "car_model": c_mv.strip().upper(), "owner_signature": c_sig}
+        st.session_state.pending_contract = {"contract_no": c_no.strip().upper() or "N/A", "date": c_date.strftime("%d/%m/%Y"), "driver_name": c_name.strip().upper(), "address": normalize_address(c_addr), "postcode": c_post.strip().upper(), "dob": c_dob.strip(), "license_no": c_lic.strip().upper(), "expiry_date": c_exp.strip(), "issuing_authority": c_auth.strip().upper(), "phone": c_ph.strip(), "email": c_em.strip().upper(), "rent": c_rent.strip(), "rate": c_rate.strip(), "deposit": c_dep.strip(), "start_date": c_st.strftime("%d/%m/%Y"), "expected_return": c_ret.strftime("%d/%m/%Y"), "registration": format_uk_reg(c_rv), "car_make": c_mk.strip().upper(), "car_model": c_mv.strip().upper(), "owner_signature": c_sig}
         st.rerun()
