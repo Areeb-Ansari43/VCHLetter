@@ -45,7 +45,7 @@ def _find_img(base_name):
 # If you have a hosted URL for your logo, paste it here (e.g. from a GitHub
 # raw link or image host) and it will be used as the browser tab icon
 # regardless of what files happen to be deployed alongside this script.
-FAVICON_URL = "https://www.image2url.com/r2/default/images/1783184652671-85246cd9-4ce1-4884-b658-0eb23af3741a.png"
+FAVICON_URL = "https://virtualcarhire.pages.dev/assets/favicon-32x32.png?v=3"
 
 fav_path = FAVICON_URL or _find_img("Screenshot_2026-06-09_230035") or "🚗"
 
@@ -331,6 +331,14 @@ def normalize_date(s: str) -> str:
     if not s: return ""
     return re.sub(r"[.\-]", "/", s.strip())
 
+
+def clean_document_name(name: str, fallback: str) -> str:
+    """Return a safe editable base name for a downloaded PDF."""
+    value = re.sub(r'[\x00-\x1f<>:"/\\|?*]', "", str(name or ""))
+    value = re.sub(r"\s+", " ", value).strip(" .")
+    value = re.sub(r"\.pdf$", "", value, flags=re.IGNORECASE).strip(" .")
+    return value or fallback
+
 def first_date(fragment: str) -> str:
     m = re.search(r"\d{1,2}[./\-]\d{1,2}[./\-]\d{2,4}", fragment)
     return normalize_date(m.group(0)) if m else ""
@@ -600,7 +608,9 @@ def generate_permission_letter(data: dict) -> bytes:
     c.drawString(54, y, "Hire start date. :"); c.drawString(160, y, data["start_date"])
     y -= 15
     c.drawString(54, y, "Hire end date    :"); c.drawString(160, y, data["end_date"])
-    y -= 25
+    y -= 12
+    c.drawString(54, y, "Regards,")
+    y -= 13
 
     if sig:
         sig_h = 115
@@ -647,6 +657,8 @@ CONTRACT_PAGE1_FIELDS = {
     "deposit":           (107,   311.5, 8.8),   # "Deposit Paid £___" row
     "start_date":        (108,   213.4, 8.8),   # "Date Hire Start:" row
     "expected_return":   (185,   198.4, 8.8),   # "Expected Date of Vehicle Return:" row
+    "start_time":        (455,   213.4, 8.8),   # time the vehicle was handed over
+    "return_time":       (455,   198.4, 8.8),   # time the vehicle was returned
     "car_make":          (68,    133.9, 8.8),   # "HIRE VEHICLE DETAILS" -> Make/Reg/Model row
     "registration":      (288,   133.9, 8.8),
     "car_model":         (456,   133.9, 8.8),
@@ -662,7 +674,9 @@ CONTRACT_FIELD_MAXW = {
     "driver_name": 300,
     "address": 300,
     "car_make": 180,
-    "car_model": 130,
+    "car_model":         130,
+    "start_time":        75,
+    "return_time":       75,
 }
 
 # ─────────────────────────────────────────────
@@ -797,7 +811,7 @@ with st.sidebar:
 # ─────────────────────────────────────────────
 #  SECURED MASTER WORKSPACE
 # ─────────────────────────────────────────────
-for k, v in dict(ocr_name="", ocr_licence="", ocr_address="", ocr_postcode="", ocr_dob="", ocr_expiry="", last_scan_id="", sel_reg="", sel_make="", sel_model="", scan_msg="", fleet_msg="", perm_pdf=None, contract_pdf=None, contract_no="", pending_contract=None).items():
+for k, v in dict(ocr_name="", ocr_licence="", ocr_address="", ocr_postcode="", ocr_dob="", ocr_expiry="", last_scan_id="", sel_reg="", sel_make="", sel_model="", scan_msg="", fleet_msg="", perm_pdf=None, perm_filename="Permission Letter", contract_pdf=None, contract_filename="Contract", contract_no="", pending_contract=None).items():
     if k not in st.session_state: st.session_state[k] = v
 
 st.title("FA-IBI Workspace")
@@ -849,6 +863,7 @@ if st.session_state.pending_contract:
     try:
         st.session_state.contract_pdf = generate_contract(st.session_state.pending_contract)
         st.session_state.contract_no = st.session_state.pending_contract["contract_no"]
+        st.session_state.contract_filename = st.session_state.contract_filename or "Contract"
     except Exception as e: st.error(f"Render Error: {e}")
     finally: st.session_state.pending_contract = None
 
@@ -861,11 +876,13 @@ with tab1:
         with c2:
             p_name, p_lic, p_start, p_end = st.text_input("Driver Full Name", value=st.session_state.ocr_name), st.text_input("Driving Licence No", value=st.session_state.ocr_licence), st.date_input("Hire Start Date", datetime.now(), format="DD/MM/YYYY", key="p_form_start"), st.date_input("Hire End Date", datetime.now(), format="DD/MM/YYYY", key="p_form_end")
         p_addr = st.text_area("Driver Address", value=st.session_state.ocr_address)
+        p_doc_name = st.text_input("Document Name", "Permission Letter", key="perm_document_name")
         go_p = st.form_submit_button("🖨️ Generate Permission Letter PDF")
     if go_p:
         st.session_state.perm_pdf = generate_permission_letter({"date": p_date.strftime("%d/%m/%Y"), "insurance_policy": p_ins, "registration": format_uk_reg(p_reg), "make_model": p_mod.upper(), "driver_name": p_name.upper(), "address": p_addr.upper(), "license_no": p_lic.upper(), "start_date": p_start.strftime("%d/%m/%Y"), "end_date": p_end.strftime("%d/%m/%Y")})
+        st.session_state.perm_filename = clean_document_name(p_doc_name, "Permission Letter")
         st.rerun()
-    if st.session_state.perm_pdf: st.download_button("📥 Download Permission Letter PDF", data=st.session_state.perm_pdf, file_name="Permission_Letter.pdf", mime="application/pdf", key="dl_perm_btn")
+    if st.session_state.perm_pdf: st.download_button("📥 Download Permission Letter PDF", data=st.session_state.perm_pdf, file_name=f"{st.session_state.perm_filename}.pdf", mime="application/pdf", key="dl_perm_btn")
 
 with tab2:
     with st.expander("🧭 Field positions off? Calibrate them"):
@@ -880,7 +897,7 @@ with tab2:
 
     if st.session_state.contract_pdf:
         notify("🎉 Contract PDF Created Successfully!", "success")
-        st.download_button("📥 Download Generated Contract PDF", data=st.session_state.contract_pdf, file_name=f"Contract_{st.session_state.contract_no}.pdf", mime="application/pdf", key="dl_contract_btn")
+        st.download_button("📥 Download Generated Contract PDF", data=st.session_state.contract_pdf, file_name=f"{st.session_state.contract_filename}.pdf", mime="application/pdf", key="dl_contract_btn")
         st.markdown("---")
     with st.form("contract_form"):
         st.subheader("Hirer Details")
@@ -896,13 +913,18 @@ with tab2:
         st.markdown("---"); pt1, pt2 = st.columns(2)
         with pt1: c_st = st.date_input("Hire Start", datetime.now(), format="DD/MM/YYYY", key="c_form_start")
         with pt2: c_ret = st.date_input("Expected Return", datetime.now(), format="DD/MM/YYYY", key="c_form_return")
+        tm1, tm2 = st.columns(2)
+        with tm1: c_start_time = st.time_input("Time Car Given", datetime.now().time().replace(second=0, microsecond=0), format="HH:mm", key="c_form_start_time")
+        with tm2: c_return_time = st.time_input("Time Car Returned", datetime.now().time().replace(second=0, microsecond=0), format="HH:mm", key="c_form_return_time")
         st.markdown("---"); pv1, pv2, pv3 = st.columns(3)
         with pv1: c_mk = st.text_input("Make", value=st.session_state.sel_make)
         with pv2: c_rv = st.text_input("Reg", value=st.session_state.sel_reg)
         with pv3: c_mv = st.text_input("Model", value=st.session_state.sel_model)
         st.markdown("---")
         c_sig = st.selectbox("✍️ Owner Signature", SIGNATURE_OPTIONS)
+        c_doc_name = st.text_input("Document Name", "Contract", key="contract_document_name")
         go_c = st.form_submit_button("🖨️ Generate 2-Page Contract PDF", type="primary")
     if go_c:
-        st.session_state.pending_contract = {"contract_no": c_no.strip().upper() or "N/A", "date": c_date.strftime("%d/%m/%Y"), "driver_name": c_name.strip().upper(), "address": normalize_address(c_addr), "postcode": c_post.strip().upper(), "dob": c_dob.strip(), "license_no": c_lic.strip().upper(), "expiry_date": c_exp.strip(), "issuing_authority": c_auth.strip().upper(), "phone": c_ph.strip(), "email": c_em.strip().upper(), "rent": c_rent.strip(), "rate": c_rate.strip(), "deposit": c_dep.strip(), "start_date": c_st.strftime("%d/%m/%Y"), "expected_return": c_ret.strftime("%d/%m/%Y"), "registration": format_uk_reg(c_rv), "car_make": c_mk.strip().upper(), "car_model": c_mv.strip().upper(), "owner_signature": c_sig}
+        st.session_state.pending_contract = {"contract_no": c_no.strip().upper() or "N/A", "date": c_date.strftime("%d/%m/%Y"), "driver_name": c_name.strip().upper(), "address": normalize_address(c_addr), "postcode": c_post.strip().upper(), "dob": c_dob.strip(), "license_no": c_lic.strip().upper(), "expiry_date": c_exp.strip(), "issuing_authority": c_auth.strip().upper(), "phone": c_ph.strip(), "email": c_em.strip().upper(), "rent": c_rent.strip(), "rate": c_rate.strip(), "deposit": c_dep.strip(), "start_date": c_st.strftime("%d/%m/%Y"), "expected_return": c_ret.strftime("%d/%m/%Y"), "start_time": c_start_time.strftime("%H:%M"), "return_time": c_return_time.strftime("%H:%M"), "registration": format_uk_reg(c_rv), "car_make": c_mk.strip().upper(), "car_model": c_mv.strip().upper(), "owner_signature": c_sig}
+        st.session_state.contract_filename = clean_document_name(c_doc_name, "Contract")
         st.rerun()
