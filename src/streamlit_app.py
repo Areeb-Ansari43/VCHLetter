@@ -646,12 +646,12 @@ def generate_permission_letter(data: dict) -> bytes:
     y -= 25
 
     c.drawString(54, y, "Regards,")
-    y -= 10
+    y -= 5
 
     if sig:
-        sig_w, sig_h = 95, 55
-        c.drawImage(sig, 20, y - sig_h, width=sig_w, height=sig_h, mask="auto")
-        y -= (sig_h + 12)
+        sig_w, sig_h = 130, 80
+        c.drawImage(sig, 35, y - sig_h, width=sig_w, height=sig_h, mask="auto")
+        y -= (sig_h + 4)
         c.setFont("Helvetica-Bold", 11)
         c.drawString(54, y, "Muhammad Sohail Qureshi")
         y -= 14
