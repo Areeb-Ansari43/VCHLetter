@@ -357,8 +357,14 @@ def strip_address_noise(s: str) -> str:
     return s
 
 def extract_postcode(text: str) -> str:
+    # Match UK postcode patterns: e.g. SW1A 1AA, W1A 0AX, M1 1AE, B33 8TH, CR2 6XH, TW4 6JQ
     m = re.search(r"\b([A-Z]{1,2}[0-9][A-Z0-9]?\s*[0-9][A-Z]{2})\b", text.upper())
-    return m.group(1).strip() if m else ""
+    if m:
+        res = m.group(1).strip()
+        if " " not in res and len(res) >= 5:
+            res = f"{res[:-3]} {res[-3:]}"
+        return res
+    return ""
 
 def normalize_address(s: str) -> str:
     """Keep the scanned address on one clean line for every downstream document."""
@@ -368,6 +374,17 @@ def normalize_address(s: str) -> str:
     s = re.sub(r"\s+", " ", s)
     s = re.sub(r"\s*,\s*", ", ", s)
     return s.strip(" ,")
+
+
+def get_full_address(addr: str, postcode: str) -> str:
+    """Combine address and postcode into a single full line address."""
+    addr_clean = normalize_address(addr)
+    post_clean = (postcode or "").strip().upper()
+    if post_clean and post_clean not in addr_clean:
+        if addr_clean:
+            return f"{addr_clean}, {post_clean}"
+        return post_clean
+    return addr_clean
 
 
 def normalize_license_number(s: str) -> str:
@@ -424,15 +441,18 @@ def _best_ocr_text(bw_img: Image.Image) -> str:
 
 def run_ocr(uploaded_file) -> str:
     img = Image.open(uploaded_file).convert("RGB")
+    img = ImageOps.exif_transpose(img)
     img = _deskew_and_orient(img)
 
     w, h = img.size
-    target = 2200
+    target = 2400
     if max(w, h) < target:
         scale = target / max(w, h)
         img = img.resize((int(w * scale), int(h * scale)), Image.LANCZOS)
 
     gray = ImageOps.grayscale(img)
+    gray = ImageEnhance.Sharpness(gray).enhance(2.0)
+    gray = ImageEnhance.Contrast(gray).enhance(1.8)
 
     if cv2 is not None:
         arr = np.array(gray)
@@ -442,20 +462,25 @@ def run_ocr(uploaded_file) -> str:
         )
         bw = Image.fromarray(bw_arr)
     else:
-        gray = ImageEnhance.Contrast(gray).enhance(1.6)
-        bw = gray.point(lambda p: 255 if p > 150 else 0)
+        bw = gray.point(lambda p: 255 if p > 140 else 0)
 
-    return _best_ocr_text(bw)
+    # Run OCR on preprocessed grayscale as well as adaptive thresholded image to catch high contrast text
+    text_bw = _best_ocr_text(bw)
+    text_gray = _best_ocr_text(gray)
+
+    # Return the richer text output
+    return text_bw if len(text_bw) >= len(text_gray) else text_gray
 
 # ─────────────────────────────────────────────
 #  AZURE AI DOCUMENT INTELLIGENCE
 # ─────────────────────────────────────────────
 def azure_ocr_available() -> bool:
-    return (
-        DocumentIntelligenceClient is not None
-        and bool(st.secrets.get("AZURE_DOCINTEL_ENDPOINT", ""))
-        and bool(st.secrets.get("AZURE_DOCINTEL_KEY", ""))
-    )
+    if DocumentIntelligenceClient is None:
+        return False
+    try:
+        return bool(st.secrets.get("AZURE_DOCINTEL_ENDPOINT", "")) and bool(st.secrets.get("AZURE_DOCINTEL_KEY", ""))
+    except Exception:
+        return False
 
 def _field_str(fields, name):
     f = fields.get(name)
@@ -513,22 +538,32 @@ def run_ocr_azure(uploaded_file) -> dict:
 
 def parse_licence(raw: str) -> dict:
     blob = " " + re.sub(r"\s+", " ", raw.upper()) + " "
-    surname = clean_name(_grab(blob, [r"1\."], [r"2\."])) or (re.search(r"1\.\s*([A-Z\-]+)", blob).group(1).strip() if re.search(r"1\.\s*([A-Z\-]+)", blob) else "")
-    forename = clean_name(_grab(blob, [r"2\."], [r"3\."])) or (re.search(r"2\.\s*([A-Z\-]+)", blob).group(1).strip() if re.search(r"2\.\s*([A-Z\-]+)", blob) else "")
-    dob = first_date(_grab(blob, [r"3\."], [r"4[Aa]\b"])) or (normalize_date(re.search(r"3\.\s*(\d{1,2}[./\-]\d{1,2}[./\-]\d{2,4})", blob).group(1)) if re.search(r"3\.\s*(\d{1,2}[./\-]\d{1,2}[./\-]\d{2,4})", blob) else "")
-    expiry = first_date(_grab(blob, [r"4[Bb]\.?"], [r"4[Cc]", r"5\."])) or (normalize_date(re.search(r"4[Bb]\.?\s*(\d{1,2}[./\-]\d{1,2}[./\-]\d{2,4})", blob).group(1)) if re.search(r"4[Bb]\.?\s*(\d{1,2}[./\-]\d{1,2}[./\-]\d{2,4})", blob) else "")
+
+    # Pre-clean known common OCR substitutions in field headers
+    blob_proc = re.sub(r"\b1[.,;]\s*", " 1. ", blob)
+    blob_proc = re.sub(r"\b2[.,;]\s*", " 2. ", blob_proc)
+    blob_proc = re.sub(r"\b3[.,;]\s*", " 3. ", blob_proc)
+    blob_proc = re.sub(r"\b4[Aa][.,;]\s*", " 4A. ", blob_proc)
+    blob_proc = re.sub(r"\b4[Bb][.,;]\s*", " 4B. ", blob_proc)
+    blob_proc = re.sub(r"\b5[.,;]\s*", " 5. ", blob_proc)
+    blob_proc = re.sub(r"\b8[.,;]\s*", " 8. ", blob_proc)
+
+    surname = clean_name(_grab(blob_proc, [r"1\."], [r"2\."])) or (re.search(r"1\.\s*([A-Z\-]+)", blob_proc).group(1).strip() if re.search(r"1\.\s*([A-Z\-]+)", blob_proc) else "")
+    forename = clean_name(_grab(blob_proc, [r"2\."], [r"3\."])) or (re.search(r"2\.\s*([A-Z\-]+)", blob_proc).group(1).strip() if re.search(r"2\.\s*([A-Z\-]+)", blob_proc) else "")
+    dob = first_date(_grab(blob_proc, [r"3\."], [r"4[Aa]\b"])) or (normalize_date(re.search(r"3\.\s*(\d{1,2}[./\-]\d{1,2}[./\-]\d{2,4})", blob_proc).group(1)) if re.search(r"3\.\s*(\d{1,2}[./\-]\d{1,2}[./\-]\d{2,4})", blob_proc) else "")
+    expiry = first_date(_grab(blob_proc, [r"4[Bb]\.?"], [r"4[Cc]", r"5\."])) or (normalize_date(re.search(r"4[Bb]\.?\s*(\d{1,2}[./\-]\d{1,2}[./\-]\d{2,4})", blob_proc).group(1)) if re.search(r"4[Bb]\.?\s*(\d{1,2}[./\-]\d{1,2}[./\-]\d{2,4})", blob_proc) else "")
 
     licence = ""
-    clean_strip = re.sub(r"\s", "", blob)
+    clean_strip = re.sub(r"\s", "", blob_proc)
     lic_match = re.search(r"5\.?([A-Z9]{5}\d{6}[A-Z9]{2}[A-Z0-9]{3,5})", clean_strip)
     if not lic_match:
         lic_match = re.search(r"([A-Z9]{5}\d{6}[A-Z9]{2}[A-Z0-9]{3,5})", clean_strip)
     if lic_match: licence = normalize_license_number(lic_match.group(1))
 
-    raw_8 = _grab(blob, [r"8\."], [r"9\."]) or (re.search(r"8\.\s*(.*?)(?=\s*9\.)", blob, re.DOTALL).group(1).strip() if re.search(r"8\.\s*(.*?)(?=\s*9\.)", blob, re.DOTALL) else blob)
-    raw_9_match = re.search(r"9\.\s*(.*?)(?=\s*10\.|$)", blob, re.DOTALL)
+    raw_8 = _grab(blob_proc, [r"8\."], [r"9\."]) or (re.search(r"8\.\s*(.*?)(?=\s*9\.)", blob_proc, re.DOTALL).group(1).strip() if re.search(r"8\.\s*(.*?)(?=\s*9\.)", blob_proc, re.DOTALL) else blob_proc)
+    raw_9_match = re.search(r"9\.\s*(.*?)(?=\s*10\.|$)", blob_proc, re.DOTALL)
     raw_9 = raw_9_match.group(1).strip() if raw_9_match else ""
-    postcode = extract_postcode(raw_8) or extract_postcode(raw_9)
+    postcode = extract_postcode(raw_8) or extract_postcode(raw_9) or extract_postcode(blob_proc)
     addr_clean = strip_address_noise(raw_8.replace(licence, ""))
     if postcode: addr_clean = re.sub(re.escape(postcode), "", addr_clean, flags=re.I)
     addr_clean = re.sub(r"^[0-9A-Z]{1,2}\b\.?\s*", "", addr_clean.strip()).strip(", ").strip()
@@ -608,19 +643,20 @@ def generate_permission_letter(data: dict) -> bytes:
     c.drawString(54, y, "Hire start date. :"); c.drawString(160, y, data["start_date"])
     y -= 15
     c.drawString(54, y, "Hire end date    :"); c.drawString(160, y, data["end_date"])
-    y -= 12
+    y -= 25
+
+    c.drawString(54, y, "Regards,")
+    y -= 10
 
     if sig:
-        sig_h = 115
-        sig_y = max(y - sig_h - 24, 120)
-        c.drawString(54, sig_y + sig_h + 10, "Regards,")
-        c.drawImage(sig, -20, sig_y, width=280, height=sig_h, mask="auto")
+        sig_w, sig_h = 95, 55
+        c.drawImage(sig, 20, y - sig_h, width=sig_w, height=sig_h, mask="auto")
+        y -= (sig_h + 12)
         c.setFont("Helvetica-Bold", 11)
-        c.drawString(54, sig_y - 14, "Muhammad Sohail Qureshi")
+        c.drawString(54, y, "Muhammad Sohail Qureshi")
+        y -= 14
         c.setFont("Helvetica", 11)
-        c.drawString(54, sig_y - 28, "Director (FA-IBI LTD)")
-    else:
-        c.drawString(54, y, "Regards,")
+        c.drawString(54, y, "Director(FA-IBI LTD)")
     c.save(); buf.seek(0); return buf.getvalue()
 
 # ─────────────────────────────────────────────
@@ -701,8 +737,8 @@ SIGNATURE_OPTIONS = ["-- No Signature --"] + list(SIGNATURE_FILES.keys())
 # aspect ratio (see _stamp_signature), so tall/narrow and wide/short
 # signatures both look correct without being squashed or stretched.
 SIGNATURE_PLACEMENT = {
-    1: {"x": 448, "y": 64, "width": 95, "height": 34},   # page 1, raised slightly for clarity
-    2: {"x": 452, "y": 42, "width": 62, "height": 26},   # page 2, raised slightly for clarity
+    1: {"x": 448, "y": 78, "width": 95, "height": 34},   # page 1, raised for clarity
+    2: {"x": 452, "y": 56, "width": 62, "height": 26},   # page 2, raised for clarity
 }
 
 def _draw_fit(c, text, x, y, base_size=8.8, max_width=None, font="Helvetica"):
@@ -876,7 +912,8 @@ with tab1:
             p_date, p_ins, p_reg, p_mod = st.date_input("Document Date", datetime.now(), format="DD/MM/YYYY", key="p_form_date"), st.text_input("Insurance Policy No", "HAVFL-000211"), st.text_input("Vehicle Registration", value=st.session_state.sel_reg), st.text_input("Make & Model", value=f"{st.session_state.sel_make} {st.session_state.sel_model}".strip())
         with c2:
             p_name, p_lic, p_start, p_end = st.text_input("Driver Full Name", value=st.session_state.ocr_name), st.text_input("Driving Licence No", value=st.session_state.ocr_licence), st.date_input("Hire Start Date", datetime.now(), format="DD/MM/YYYY", key="p_form_start"), st.date_input("Hire End Date", datetime.now(), format="DD/MM/YYYY", key="p_form_end")
-        p_addr = st.text_area("Driver Address", value=st.session_state.ocr_address)
+        perm_addr_val = get_full_address(st.session_state.ocr_address, st.session_state.ocr_postcode)
+        p_addr = st.text_area("Driver Address", value=perm_addr_val)
         p_doc_name = st.text_input("Document Name", "Permission Letter", key="perm_document_name")
         go_p = st.form_submit_button("🖨️ Generate Permission Letter PDF")
     if go_p:
