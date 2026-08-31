@@ -553,8 +553,48 @@ def extract_signature_crop(result, orig_img: Image.Image) -> bytes:
         )
 
     cropped_img = orig_img.crop(crop_box)
+    return clean_signature_crop(cropped_img)
+
+def clean_signature_crop(cropped_pil: Image.Image) -> bytes:
+    """Isolate dark signature ink from background, crop tightly around ink, and make background transparent."""
+    if cropped_pil.mode != "RGB":
+        cropped_pil = cropped_pil.convert("RGB")
+
+    cv_img = np.array(cropped_pil)
+    gray = cv2.cvtColor(cv_img, cv2.COLOR_RGB2GRAY)
+
+    blurred = cv2.GaussianBlur(gray, (3, 3), 0)
+    _, thresh = cv2.threshold(blurred, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (2, 2))
+    cleaned_mask = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel)
+
+    contours, _ = cv2.findContours(cleaned_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+    if contours:
+        valid_contours = [c for c in contours if cv2.contourArea(c) > 10]
+        if not valid_contours:
+            valid_contours = contours
+
+        all_pts = np.vstack(valid_contours)
+        x, y, w, h = cv2.boundingRect(all_pts)
+
+        pad = 2
+        h_img, w_img = gray.shape
+        x1 = max(0, x - pad)
+        y1 = max(0, y - pad)
+        x2 = min(w_img, x + w + pad)
+        y2 = min(h_img, y + h + pad)
+
+        cv_img = cv_img[y1:y2, x1:x2]
+        cleaned_mask = cleaned_mask[y1:y2, x1:x2]
+
+    rgba = cv2.cvtColor(cv_img, cv2.COLOR_RGB2RGBA)
+    rgba[:, :, 3] = cleaned_mask
+
+    res_pil = Image.fromarray(rgba)
     buf = io.BytesIO()
-    cropped_img.save(buf, format="PNG")
+    res_pil.save(buf, format="PNG")
     return buf.getvalue()
 
 def run_ocr_azure(uploaded_file) -> dict:
@@ -611,9 +651,7 @@ def extract_signature_crop_fallback(uploaded_file) -> bytes:
         int(0.88 * orig_h),
     )
     cropped_img = orig_img.crop(crop_box)
-    buf = io.BytesIO()
-    cropped_img.save(buf, format="PNG")
-    return buf.getvalue()
+    return clean_signature_crop(cropped_img)
 
 def parse_licence(raw: str) -> dict:
     blob = " " + re.sub(r"\s+", " ", raw.upper()) + " "
@@ -736,9 +774,6 @@ def generate_permission_letter(data: dict) -> bytes:
         y -= 14
         c.setFont("Helvetica", 11)
         c.drawString(54, y, "Director(FA-IBI LTD)")
-
-    if data.get("hirer_signature"):
-        _stamp_hirer_signature(c, data.get("hirer_signature"), spot={"x": 350, "y": 70, "width": 160, "height": 55})
 
     c.save(); buf.seek(0); return buf.getvalue()
 
@@ -888,7 +923,7 @@ def generate_contract(data: dict) -> bytes:
                   font="Helvetica-Bold" if key in ("contract_no", "rent", "rate", "deposit", "car_make", "registration", "car_model") else "Helvetica")
     _stamp_signature(cv, data.get("owner_signature", ""), page=1)
     if data.get("hirer_signature"):
-        _stamp_hirer_signature(cv, data.get("hirer_signature"), spot={"x": 160, "y": 78, "width": 95, "height": 34})
+        _stamp_hirer_signature(cv, data.get("hirer_signature"), spot={"x": 160, "y": 78, "width": 62, "height": 22})
     cv.showPage()
 
     if bg2: cv.drawImage(bg2, 0, 0, width=W, height=H)
@@ -1020,7 +1055,7 @@ with tab1:
         p_doc_name = st.text_input("Document Name", "Permission Letter", key="perm_document_name")
         go_p = st.form_submit_button("🖨️ Generate Permission Letter PDF")
     if go_p:
-        st.session_state.perm_pdf = generate_permission_letter({"date": p_date.strftime("%d/%m/%Y"), "insurance_policy": p_ins, "registration": format_uk_reg(p_reg), "make_model": p_mod.upper(), "driver_name": p_name.upper(), "address": p_addr.upper(), "license_no": p_lic.upper(), "start_date": p_start.strftime("%d/%m/%Y"), "end_date": p_end.strftime("%d/%m/%Y"), "hirer_signature": st.session_state.ocr_signature_bytes})
+        st.session_state.perm_pdf = generate_permission_letter({"date": p_date.strftime("%d/%m/%Y"), "insurance_policy": p_ins, "registration": format_uk_reg(p_reg), "make_model": p_mod.upper(), "driver_name": p_name.upper(), "address": p_addr.upper(), "license_no": p_lic.upper(), "start_date": p_start.strftime("%d/%m/%Y"), "end_date": p_end.strftime("%d/%m/%Y")})
         st.session_state.perm_filename = clean_document_name(p_doc_name, "Permission Letter")
         st.rerun()
     if st.session_state.perm_pdf: st.download_button("📥 Download Permission Letter PDF", data=st.session_state.perm_pdf, file_name=f"{st.session_state.perm_filename}.pdf", mime="application/pdf", key="dl_perm_btn")
