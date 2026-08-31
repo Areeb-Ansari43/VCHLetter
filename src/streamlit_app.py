@@ -770,9 +770,9 @@ def generate_permission_letter(data: dict) -> bytes:
     y -= 5
 
     if sig:
-        sig_w, sig_h = 130, 80
-        c.drawImage(sig, 35, y - sig_h, width=sig_w, height=sig_h, mask="auto")
-        y -= (sig_h + 4)
+        sig_w, sig_h = 95, 55
+        c.drawImage(sig, 20, y - sig_h, width=sig_w, height=sig_h, mask="auto")
+        y -= (sig_h + 12)
         c.setFont("Helvetica-Bold", 11)
         c.drawString(54, y, "Muhammad Sohail Qureshi")
         y -= 14
@@ -927,7 +927,7 @@ def generate_contract(data: dict) -> bytes:
                   font="Helvetica-Bold" if key in ("contract_no", "rent", "rate", "deposit", "car_make", "registration", "car_model") else "Helvetica")
     _stamp_signature(cv, data.get("owner_signature", ""), page=1)
     if data.get("hirer_signature"):
-        _stamp_hirer_signature(cv, data.get("hirer_signature"), spot={"x": 160, "y": 66, "width": 55, "height": 18})
+        _stamp_hirer_signature(cv, data.get("hirer_signature"), spot={"x": 160, "y": 66, "width": 110, "height": 25})
     cv.showPage()
 
     if bg2: cv.drawImage(bg2, 0, 0, width=W, height=H)
@@ -935,6 +935,8 @@ def generate_contract(data: dict) -> bytes:
         _draw_fit(cv, data.get(key, ""), x, y, base_size=size, max_width=CONTRACT_FIELD_MAXW.get(key),
                   font="Helvetica-Bold")
     _stamp_signature(cv, data.get("owner_signature", ""), page=2)
+    if data.get("hirer_signature"):
+        _stamp_hirer_signature(cv, data.get("hirer_signature"), spot={"x": 160, "y": 42, "width": 110, "height": 25})
 
     cv.save(); buf.seek(0); return buf.getvalue()
 
