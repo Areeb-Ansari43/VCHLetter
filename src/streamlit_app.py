@@ -770,8 +770,8 @@ def generate_permission_letter(data: dict) -> bytes:
     y -= 5
 
     if sig:
-        sig_w, sig_h = 95, 55
-        c.drawImage(sig, 20, y - sig_h, width=sig_w, height=sig_h, mask="auto")
+        sig_w, sig_h = 60, 38
+        c.drawImage(sig, 54, y - sig_h, width=sig_w, height=sig_h, mask="auto")
         y -= (sig_h + 12)
         c.setFont("Helvetica-Bold", 11)
         c.drawString(54, y, "Muhammad Sohail Qureshi")
@@ -1108,11 +1108,17 @@ with tab2:
         with pv2: c_rv = st.text_input("Reg", value=st.session_state.sel_reg)
         with pv3: c_mv = st.text_input("Model", value=st.session_state.sel_model)
         st.markdown("---")
-        c_sig = st.selectbox("✍️ Owner Signature", SIGNATURE_OPTIONS)
+        sig_col1, sig_col2 = st.columns(2)
+        hirer_sig_options = ["Scanned Licence Signature", "-- No Signature --"]
+        with sig_col1:
+            c_hirer_sig = st.selectbox("✍️ Hirer Signature", hirer_sig_options)
+        with sig_col2:
+            c_sig = st.selectbox("✍️ Owner Signature", SIGNATURE_OPTIONS)
         default_c_doc_name = f"{st.session_state.ocr_name} Contract".strip() if st.session_state.ocr_name else "Contract"
         c_doc_name = st.text_input("Document Name", default_c_doc_name, key="contract_document_name")
         go_c = st.form_submit_button("🖨️ Generate 2-Page Contract PDF", type="primary")
     if go_c:
-        st.session_state.pending_contract = {"contract_no": c_no.strip().upper() or "N/A", "date": c_date.strftime("%d/%m/%Y"), "driver_name": c_name.strip().upper(), "address": normalize_address(c_addr), "postcode": c_post.strip().upper(), "dob": c_dob.strip(), "license_no": c_lic.strip().upper(), "expiry_date": c_exp.strip(), "issuing_authority": c_auth.strip().upper(), "phone": c_ph.strip(), "email": c_em.strip().upper(), "rent": c_rent.strip(), "rate": c_rate.strip(), "deposit": c_dep.strip(), "start_date": c_st.strftime("%d/%m/%Y"), "expected_return": c_ret.strftime("%d/%m/%Y"), "start_time": c_start_time.strftime("%H:%M"), "return_time": c_return_time.strftime("%H:%M"), "registration": format_uk_reg(c_rv), "car_make": c_mk.strip().upper(), "car_model": c_mv.strip().upper(), "owner_signature": c_sig, "hirer_signature": st.session_state.ocr_signature_bytes}
+        hirer_sig_bytes = st.session_state.ocr_signature_bytes if c_hirer_sig == "Scanned Licence Signature" else None
+        st.session_state.pending_contract = {"contract_no": c_no.strip().upper() or "N/A", "date": c_date.strftime("%d/%m/%Y"), "driver_name": c_name.strip().upper(), "address": normalize_address(c_addr), "postcode": c_post.strip().upper(), "dob": c_dob.strip(), "license_no": c_lic.strip().upper(), "expiry_date": c_exp.strip(), "issuing_authority": c_auth.strip().upper(), "phone": c_ph.strip(), "email": c_em.strip().upper(), "rent": c_rent.strip(), "rate": c_rate.strip(), "deposit": c_dep.strip(), "start_date": c_st.strftime("%d/%m/%Y"), "expected_return": c_ret.strftime("%d/%m/%Y"), "start_time": c_start_time.strftime("%H:%M"), "return_time": c_return_time.strftime("%H:%M"), "registration": format_uk_reg(c_rv), "car_make": c_mk.strip().upper(), "car_model": c_mv.strip().upper(), "owner_signature": c_sig, "hirer_signature": hirer_sig_bytes}
         st.session_state.contract_filename = clean_document_name(c_doc_name, "Contract")
         st.rerun()
