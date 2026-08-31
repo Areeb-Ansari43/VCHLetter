@@ -544,12 +544,12 @@ def extract_signature_crop(result, orig_img: Image.Image) -> bytes:
                 )
 
     if not crop_box:
-        # Fallback bounding box for UK driving licence signature (Field 9)
+        # Bounding box for UK driving licence signature (Field 9) beneath address
         crop_box = (
             int(0.18 * orig_w),
-            int(0.68 * orig_h),
+            int(0.73 * orig_h),
             int(0.55 * orig_w),
-            int(0.88 * orig_h),
+            int(0.90 * orig_h),
         )
 
     cropped_img = orig_img.crop(crop_box)
@@ -646,9 +646,9 @@ def extract_signature_crop_fallback(uploaded_file) -> bytes:
     orig_w, orig_h = orig_img.size
     crop_box = (
         int(0.18 * orig_w),
-        int(0.68 * orig_h),
+        int(0.73 * orig_h),
         int(0.55 * orig_w),
-        int(0.88 * orig_h),
+        int(0.90 * orig_h),
     )
     cropped_img = orig_img.crop(crop_box)
     return clean_signature_crop(cropped_img)
@@ -718,6 +718,10 @@ def _wrap_draw_bold_token(c, text, token, x, y, max_width, size=11, leading=14):
 
 
 def generate_permission_letter(data: dict) -> bytes:
+    """Generate Permission Letter PDF containing only the Director signature (Muhammad Sohail Qureshi).
+
+    Note: Hirer/licence signature is intentionally omitted from this document completely.
+    """
     buf = io.BytesIO()
     c = canvas.Canvas(buf, pagesize=letter, pageCompression=1)
     pw, ph = letter
@@ -855,8 +859,8 @@ SIGNATURE_OPTIONS = ["-- No Signature --"] + list(SIGNATURE_FILES.keys())
 # aspect ratio (see _stamp_signature), so tall/narrow and wide/short
 # signatures both look correct without being squashed or stretched.
 SIGNATURE_PLACEMENT = {
-    1: {"x": 448, "y": 78, "width": 95, "height": 34},   # page 1, raised for clarity
-    2: {"x": 452, "y": 56, "width": 62, "height": 26},   # page 2, raised for clarity
+    1: {"x": 448, "y": 64, "width": 85, "height": 22},   # page 1, positioned directly above printed line
+    2: {"x": 452, "y": 42, "width": 62, "height": 20},   # page 2, positioned directly above printed line
 }
 
 def _draw_fit(c, text, x, y, base_size=8.8, max_width=None, font="Helvetica"):
@@ -923,7 +927,7 @@ def generate_contract(data: dict) -> bytes:
                   font="Helvetica-Bold" if key in ("contract_no", "rent", "rate", "deposit", "car_make", "registration", "car_model") else "Helvetica")
     _stamp_signature(cv, data.get("owner_signature", ""), page=1)
     if data.get("hirer_signature"):
-        _stamp_hirer_signature(cv, data.get("hirer_signature"), spot={"x": 160, "y": 78, "width": 62, "height": 22})
+        _stamp_hirer_signature(cv, data.get("hirer_signature"), spot={"x": 160, "y": 66, "width": 55, "height": 18})
     cv.showPage()
 
     if bg2: cv.drawImage(bg2, 0, 0, width=W, height=H)
@@ -1010,8 +1014,12 @@ with col_scan:
                     else:
                         raw = run_ocr(uploaded); p = parse_licence(raw)
                         p["signature_bytes"] = extract_signature_crop_fallback(uploaded)
-                    st.session_state.ocr_name, st.session_state.ocr_licence, st.session_state.ocr_address, st.session_state.ocr_postcode, st.session_state.ocr_dob, st.session_state.ocr_expiry = f"{p['forename']} {p['surname']}".strip(), p["licence"], p["address"], p["postcode"], p["dob"], p["expiry"]
+                    client_name = f"{p['forename']} {p['surname']}".strip()
+                    st.session_state.ocr_name, st.session_state.ocr_licence, st.session_state.ocr_address, st.session_state.ocr_postcode, st.session_state.ocr_dob, st.session_state.ocr_expiry = client_name, p["licence"], p["address"], p["postcode"], p["dob"], p["expiry"]
                     st.session_state.ocr_signature_bytes = p.get("signature_bytes")
+                    if client_name:
+                        st.session_state.perm_filename = clean_document_name(f"{client_name} Permission Letter", "Permission Letter")
+                        st.session_state.contract_filename = clean_document_name(f"{client_name} Contract", "Contract")
                     st.session_state.scan_msg = "✅ Licence scanned successfully! Please double-check the fields below before generating documents."
                 except Exception as e: st.session_state.scan_msg = f"⚠️ Scan parsing failed: {e}"
                 st.session_state.last_scan_id = fid
@@ -1052,7 +1060,8 @@ with tab1:
             p_name, p_lic, p_start, p_end = st.text_input("Driver Full Name", value=st.session_state.ocr_name), st.text_input("Driving Licence No", value=st.session_state.ocr_licence), st.date_input("Hire Start Date", datetime.now(), format="DD/MM/YYYY", key="p_form_start"), st.date_input("Hire End Date", datetime.now(), format="DD/MM/YYYY", key="p_form_end")
         perm_addr_val = get_full_address(st.session_state.ocr_address, st.session_state.ocr_postcode)
         p_addr = st.text_area("Driver Address", value=perm_addr_val)
-        p_doc_name = st.text_input("Document Name", "Permission Letter", key="perm_document_name")
+        default_p_doc_name = f"{st.session_state.ocr_name} Permission Letter".strip() if st.session_state.ocr_name else "Permission Letter"
+        p_doc_name = st.text_input("Document Name", default_p_doc_name, key="perm_document_name")
         go_p = st.form_submit_button("🖨️ Generate Permission Letter PDF")
     if go_p:
         st.session_state.perm_pdf = generate_permission_letter({"date": p_date.strftime("%d/%m/%Y"), "insurance_policy": p_ins, "registration": format_uk_reg(p_reg), "make_model": p_mod.upper(), "driver_name": p_name.upper(), "address": p_addr.upper(), "license_no": p_lic.upper(), "start_date": p_start.strftime("%d/%m/%Y"), "end_date": p_end.strftime("%d/%m/%Y")})
@@ -1098,7 +1107,8 @@ with tab2:
         with pv3: c_mv = st.text_input("Model", value=st.session_state.sel_model)
         st.markdown("---")
         c_sig = st.selectbox("✍️ Owner Signature", SIGNATURE_OPTIONS)
-        c_doc_name = st.text_input("Document Name", "Contract", key="contract_document_name")
+        default_c_doc_name = f"{st.session_state.ocr_name} Contract".strip() if st.session_state.ocr_name else "Contract"
+        c_doc_name = st.text_input("Document Name", default_c_doc_name, key="contract_document_name")
         go_c = st.form_submit_button("🖨️ Generate 2-Page Contract PDF", type="primary")
     if go_c:
         st.session_state.pending_contract = {"contract_no": c_no.strip().upper() or "N/A", "date": c_date.strftime("%d/%m/%Y"), "driver_name": c_name.strip().upper(), "address": normalize_address(c_addr), "postcode": c_post.strip().upper(), "dob": c_dob.strip(), "license_no": c_lic.strip().upper(), "expiry_date": c_exp.strip(), "issuing_authority": c_auth.strip().upper(), "phone": c_ph.strip(), "email": c_em.strip().upper(), "rent": c_rent.strip(), "rate": c_rate.strip(), "deposit": c_dep.strip(), "start_date": c_st.strftime("%d/%m/%Y"), "expected_return": c_ret.strftime("%d/%m/%Y"), "start_time": c_start_time.strftime("%H:%M"), "return_time": c_return_time.strftime("%H:%M"), "registration": format_uk_reg(c_rv), "car_make": c_mk.strip().upper(), "car_model": c_mv.strip().upper(), "owner_signature": c_sig, "hirer_signature": st.session_state.ocr_signature_bytes}
