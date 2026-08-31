@@ -499,13 +499,73 @@ def _field_date(fields, name):
     content = getattr(f, "content", None)
     return normalize_date(content) if content else ""
 
+def extract_signature_crop(result, orig_img: Image.Image) -> bytes:
+    """Extract signature crop at full resolution using Azure bounding polygon or licence position fallback."""
+    orig_w, orig_h = orig_img.size
+    crop_box = None
+
+    if result and getattr(result, "documents", None):
+        doc = result.documents[0]
+        fields = getattr(doc, "fields", {}) or {}
+        sig_field = fields.get("Signature")
+        if sig_field and getattr(sig_field, "bounding_regions", None) and sig_field.bounding_regions:
+            region = sig_field.bounding_regions[0]
+            poly = getattr(region, "polygon", [])
+            page_num = getattr(region, "page_number", 1)
+            page_w, page_h = None, None
+            if getattr(result, "pages", None):
+                for page in result.pages:
+                    if getattr(page, "page_number", None) == page_num:
+                        page_w, page_h = page.width, page.height
+                        break
+            if poly and len(poly) >= 6 and page_w and page_h:
+                xs = poly[0::2]
+                ys = poly[1::2]
+                min_x = max(0, min(xs))
+                max_x = min(page_w, max(xs))
+                min_y = max(0, min(ys))
+                max_y = min(page_h, max(ys))
+
+                rx1, rx2 = min_x / page_w, max_x / page_w
+                ry1, ry2 = min_y / page_h, max_y / page_h
+
+                pad_x = (rx2 - rx1) * 0.05
+                pad_y = (ry2 - ry1) * 0.05
+                rx1 = max(0.0, rx1 - pad_x)
+                rx2 = min(1.0, rx2 + pad_x)
+                ry1 = max(0.0, ry1 - pad_y)
+                ry2 = min(1.0, ry2 + pad_y)
+
+                crop_box = (
+                    int(rx1 * orig_w),
+                    int(ry1 * orig_h),
+                    int(rx2 * orig_w),
+                    int(ry2 * orig_h),
+                )
+
+    if not crop_box:
+        # Fallback bounding box for UK driving licence signature (Field 9)
+        crop_box = (
+            int(0.18 * orig_w),
+            int(0.68 * orig_h),
+            int(0.55 * orig_w),
+            int(0.88 * orig_h),
+        )
+
+    cropped_img = orig_img.crop(crop_box)
+    buf = io.BytesIO()
+    cropped_img.save(buf, format="PNG")
+    return buf.getvalue()
+
 def run_ocr_azure(uploaded_file) -> dict:
     uploaded_file.seek(0)
-    img = Image.open(uploaded_file).convert("RGB")
-    img = ImageOps.exif_transpose(img)
-    img.thumbnail((2000, 2000))
+    orig_img = Image.open(uploaded_file).convert("RGB")
+    orig_img = ImageOps.exif_transpose(orig_img)
+
+    azure_img = orig_img.copy()
+    azure_img.thumbnail((2000, 2000))
     buf = io.BytesIO()
-    img.save(buf, format="JPEG", quality=92)
+    azure_img.save(buf, format="JPEG", quality=92)
     img_bytes = buf.getvalue()
 
     client = DocumentIntelligenceClient(
@@ -526,6 +586,8 @@ def run_ocr_azure(uploaded_file) -> dict:
     postcode = extract_postcode(full_address)
     address_no_postcode = re.sub(re.escape(postcode), "", full_address, flags=re.I).strip(", ").strip() if postcode else full_address
 
+    sig_bytes = extract_signature_crop(result, orig_img)
+
     return {
         "surname": _field_str(fields, "LastName").upper(),
         "forename": _field_str(fields, "FirstName").upper(),
@@ -534,7 +596,24 @@ def run_ocr_azure(uploaded_file) -> dict:
         "licence": normalize_license_number(_field_str(fields, "DocumentNumber")),
         "address": normalize_address(address_no_postcode),
         "postcode": postcode.upper(),
+        "signature_bytes": sig_bytes,
     }
+
+def extract_signature_crop_fallback(uploaded_file) -> bytes:
+    uploaded_file.seek(0)
+    orig_img = Image.open(uploaded_file).convert("RGB")
+    orig_img = ImageOps.exif_transpose(orig_img)
+    orig_w, orig_h = orig_img.size
+    crop_box = (
+        int(0.18 * orig_w),
+        int(0.68 * orig_h),
+        int(0.55 * orig_w),
+        int(0.88 * orig_h),
+    )
+    cropped_img = orig_img.crop(crop_box)
+    buf = io.BytesIO()
+    cropped_img.save(buf, format="PNG")
+    return buf.getvalue()
 
 def parse_licence(raw: str) -> dict:
     blob = " " + re.sub(r"\s+", " ", raw.upper()) + " "
@@ -657,6 +736,10 @@ def generate_permission_letter(data: dict) -> bytes:
         y -= 14
         c.setFont("Helvetica", 11)
         c.drawString(54, y, "Director(FA-IBI LTD)")
+
+    if data.get("hirer_signature"):
+        _stamp_hirer_signature(c, data.get("hirer_signature"), spot={"x": 350, "y": 70, "width": 160, "height": 55})
+
     c.save(); buf.seek(0); return buf.getvalue()
 
 # ─────────────────────────────────────────────
@@ -774,6 +857,22 @@ def _stamp_signature(cv, signature_label: str, page: int):
     y = spot["y"] + (box_h - draw_h) / 2
     cv.drawImage(sig_path, x, y, width=draw_w, height=draw_h, mask="auto")
 
+def _stamp_hirer_signature(cv, signature_bytes: bytes, spot: dict):
+    if not signature_bytes:
+        return
+    box_w, box_h = spot["width"], spot["height"]
+    try:
+        from reportlab.lib.utils import ImageReader
+        im = Image.open(io.BytesIO(signature_bytes))
+        iw, ih = im.size
+        scale = min(box_w / iw, box_h / ih)
+        draw_w, draw_h = iw * scale, ih * scale
+        x = spot["x"] + (box_w - draw_w) / 2
+        y = spot["y"] + (box_h - draw_h) / 2
+        cv.drawImage(ImageReader(im), x, y, width=draw_w, height=draw_h, mask="auto")
+    except Exception:
+        pass
+
 def generate_contract(data: dict) -> bytes:
     buf = io.BytesIO()
     cv = canvas.Canvas(buf, pagesize=letter, pageCompression=1)
@@ -788,6 +887,8 @@ def generate_contract(data: dict) -> bytes:
         _draw_fit(cv, value, x, y, base_size=size, max_width=CONTRACT_FIELD_MAXW.get(key),
                   font="Helvetica-Bold" if key in ("contract_no", "rent", "rate", "deposit", "car_make", "registration", "car_model") else "Helvetica")
     _stamp_signature(cv, data.get("owner_signature", ""), page=1)
+    if data.get("hirer_signature"):
+        _stamp_hirer_signature(cv, data.get("hirer_signature"), spot={"x": 160, "y": 78, "width": 95, "height": 34})
     cv.showPage()
 
     if bg2: cv.drawImage(bg2, 0, 0, width=W, height=H)
@@ -848,7 +949,7 @@ with st.sidebar:
 # ─────────────────────────────────────────────
 #  SECURED MASTER WORKSPACE
 # ─────────────────────────────────────────────
-for k, v in dict(ocr_name="", ocr_licence="", ocr_address="", ocr_postcode="", ocr_dob="", ocr_expiry="", last_scan_id="", sel_reg="", sel_make="", sel_model="", scan_msg="", fleet_msg="", perm_pdf=None, perm_filename="Permission Letter", contract_pdf=None, contract_filename="Contract", contract_no="", pending_contract=None).items():
+for k, v in dict(ocr_name="", ocr_licence="", ocr_address="", ocr_postcode="", ocr_dob="", ocr_expiry="", ocr_signature_bytes=None, last_scan_id="", sel_reg="", sel_make="", sel_model="", scan_msg="", fleet_msg="", perm_pdf=None, perm_filename="Permission Letter", contract_pdf=None, contract_filename="Contract", contract_no="", pending_contract=None).items():
     if k not in st.session_state: st.session_state[k] = v
 
 st.title("FA-IBI Workspace")
@@ -873,7 +974,9 @@ with col_scan:
                         p = run_ocr_azure(uploaded)
                     else:
                         raw = run_ocr(uploaded); p = parse_licence(raw)
+                        p["signature_bytes"] = extract_signature_crop_fallback(uploaded)
                     st.session_state.ocr_name, st.session_state.ocr_licence, st.session_state.ocr_address, st.session_state.ocr_postcode, st.session_state.ocr_dob, st.session_state.ocr_expiry = f"{p['forename']} {p['surname']}".strip(), p["licence"], p["address"], p["postcode"], p["dob"], p["expiry"]
+                    st.session_state.ocr_signature_bytes = p.get("signature_bytes")
                     st.session_state.scan_msg = "✅ Licence scanned successfully! Please double-check the fields below before generating documents."
                 except Exception as e: st.session_state.scan_msg = f"⚠️ Scan parsing failed: {e}"
                 st.session_state.last_scan_id = fid
@@ -917,7 +1020,7 @@ with tab1:
         p_doc_name = st.text_input("Document Name", "Permission Letter", key="perm_document_name")
         go_p = st.form_submit_button("🖨️ Generate Permission Letter PDF")
     if go_p:
-        st.session_state.perm_pdf = generate_permission_letter({"date": p_date.strftime("%d/%m/%Y"), "insurance_policy": p_ins, "registration": format_uk_reg(p_reg), "make_model": p_mod.upper(), "driver_name": p_name.upper(), "address": p_addr.upper(), "license_no": p_lic.upper(), "start_date": p_start.strftime("%d/%m/%Y"), "end_date": p_end.strftime("%d/%m/%Y")})
+        st.session_state.perm_pdf = generate_permission_letter({"date": p_date.strftime("%d/%m/%Y"), "insurance_policy": p_ins, "registration": format_uk_reg(p_reg), "make_model": p_mod.upper(), "driver_name": p_name.upper(), "address": p_addr.upper(), "license_no": p_lic.upper(), "start_date": p_start.strftime("%d/%m/%Y"), "end_date": p_end.strftime("%d/%m/%Y"), "hirer_signature": st.session_state.ocr_signature_bytes})
         st.session_state.perm_filename = clean_document_name(p_doc_name, "Permission Letter")
         st.rerun()
     if st.session_state.perm_pdf: st.download_button("📥 Download Permission Letter PDF", data=st.session_state.perm_pdf, file_name=f"{st.session_state.perm_filename}.pdf", mime="application/pdf", key="dl_perm_btn")
@@ -963,6 +1066,6 @@ with tab2:
         c_doc_name = st.text_input("Document Name", "Contract", key="contract_document_name")
         go_c = st.form_submit_button("🖨️ Generate 2-Page Contract PDF", type="primary")
     if go_c:
-        st.session_state.pending_contract = {"contract_no": c_no.strip().upper() or "N/A", "date": c_date.strftime("%d/%m/%Y"), "driver_name": c_name.strip().upper(), "address": normalize_address(c_addr), "postcode": c_post.strip().upper(), "dob": c_dob.strip(), "license_no": c_lic.strip().upper(), "expiry_date": c_exp.strip(), "issuing_authority": c_auth.strip().upper(), "phone": c_ph.strip(), "email": c_em.strip().upper(), "rent": c_rent.strip(), "rate": c_rate.strip(), "deposit": c_dep.strip(), "start_date": c_st.strftime("%d/%m/%Y"), "expected_return": c_ret.strftime("%d/%m/%Y"), "start_time": c_start_time.strftime("%H:%M"), "return_time": c_return_time.strftime("%H:%M"), "registration": format_uk_reg(c_rv), "car_make": c_mk.strip().upper(), "car_model": c_mv.strip().upper(), "owner_signature": c_sig}
+        st.session_state.pending_contract = {"contract_no": c_no.strip().upper() or "N/A", "date": c_date.strftime("%d/%m/%Y"), "driver_name": c_name.strip().upper(), "address": normalize_address(c_addr), "postcode": c_post.strip().upper(), "dob": c_dob.strip(), "license_no": c_lic.strip().upper(), "expiry_date": c_exp.strip(), "issuing_authority": c_auth.strip().upper(), "phone": c_ph.strip(), "email": c_em.strip().upper(), "rent": c_rent.strip(), "rate": c_rate.strip(), "deposit": c_dep.strip(), "start_date": c_st.strftime("%d/%m/%Y"), "expected_return": c_ret.strftime("%d/%m/%Y"), "start_time": c_start_time.strftime("%H:%M"), "return_time": c_return_time.strftime("%H:%M"), "registration": format_uk_reg(c_rv), "car_make": c_mk.strip().upper(), "car_model": c_mv.strip().upper(), "owner_signature": c_sig, "hirer_signature": st.session_state.ocr_signature_bytes}
         st.session_state.contract_filename = clean_document_name(c_doc_name, "Contract")
         st.rerun()
