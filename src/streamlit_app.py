@@ -35,6 +35,31 @@ import base64, json
 from reportlab.lib.utils import simpleSplit
 
 SRC_DIR = os.path.dirname(os.path.abspath(__file__))
+AUDIT_LOG_FILE = os.path.join(SRC_DIR, "audit_logs.json")
+
+def get_audit_logs():
+    if not os.path.exists(AUDIT_LOG_FILE):
+        return []
+    try:
+        with open(AUDIT_LOG_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return []
+
+def add_audit_log(event_type: str, details: str = "", doc_name: str = ""):
+    logs = get_audit_logs()
+    entry = {
+        "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "event_type": event_type,
+        "doc_name": doc_name,
+        "details": details,
+    }
+    logs.insert(0, entry)
+    try:
+        with open(AUDIT_LOG_FILE, "w", encoding="utf-8") as f:
+            json.dump(logs, f, indent=2)
+    except Exception as e:
+        pass
 
 def _find_img(base_name):
     for ext in [".jpg", ".png", ".jpeg", ".JPG", ".PNG"]:
@@ -969,6 +994,7 @@ if not st.session_state.authenticated:
     if st.button("Verify Key"):
         if code == st.secrets.get("ACCESS_KEY", ""):
             st.session_state.authenticated = True
+            add_audit_log("Verification PIN Entered", details="Successful Verification PIN Entry")
             if cookie_manager is not None:
                 cookie_manager.set(
                     AUTH_COOKIE_NAME, "true",
@@ -977,6 +1003,7 @@ if not st.session_state.authenticated:
                 )
             st.rerun()
         else:
+            add_audit_log("Verification PIN Entered", details="Failed Verification PIN Entry")
             notify("Invalid Security Verification Pin Code", "error")
     st.stop()
 
@@ -993,7 +1020,45 @@ with st.sidebar:
 for k, v in dict(ocr_name="", ocr_licence="", ocr_address="", ocr_postcode="", ocr_dob="", ocr_expiry="", ocr_signature_bytes=None, last_scan_id="", sel_reg="", sel_make="", sel_model="", scan_msg="", fleet_msg="", perm_pdf=None, perm_filename="Permission Letter", contract_pdf=None, contract_filename="Contract", contract_no="", pending_contract=None).items():
     if k not in st.session_state: st.session_state[k] = v
 
-st.title("FA-IBI Workspace")
+col_head1, col_head2 = st.columns([3, 1])
+with col_head1:
+    st.title("FA-IBI Workspace")
+with col_head2:
+    st.markdown("<div style='text-align: right; margin-top: 10px;'>", unsafe_allow_html=True)
+    with st.popover("📋 Audit Logs", use_container_width=True):
+        st.subheader("📋 System Audit Logs")
+        st.caption("History of created documents & PIN verification attempts")
+        logs = get_audit_logs()
+        if not logs:
+            st.info("No audit log records found.")
+        else:
+            search_query = st.text_input("🔍 Search logs...", key="audit_log_search")
+            filtered_logs = logs
+            if search_query.strip():
+                q = search_query.strip().lower()
+                filtered_logs = [
+                    l for l in logs
+                    if q in l.get("timestamp", "").lower()
+                    or q in l.get("event_type", "").lower()
+                    or q in l.get("doc_name", "").lower()
+                    or q in l.get("details", "").lower()
+                ]
+
+            import pandas as pd
+            df = pd.DataFrame(filtered_logs)
+            if not df.empty:
+                df = df.rename(columns={
+                    "timestamp": "Date & Time",
+                    "event_type": "Event Type",
+                    "doc_name": "Document Name",
+                    "details": "Details"
+                })
+                cols = [c for c in ["Date & Time", "Event Type", "Document Name", "Details"] if c in df.columns]
+                st.dataframe(df[cols], use_container_width=True, hide_index=True)
+            else:
+                st.write("No matching log records found.")
+    st.markdown("</div>", unsafe_allow_html=True)
+
 st.markdown("### 🎛️ Shared Data Automation Panel")
 if st.session_state.scan_msg:
     notify(st.session_state.scan_msg, "warning" if st.session_state.scan_msg.startswith("⚠️") else "success")
@@ -1066,8 +1131,10 @@ with tab1:
         p_doc_name = st.text_input("Document Name", default_p_doc_name, key="perm_document_name")
         go_p = st.form_submit_button("🖨️ Generate Permission Letter PDF")
     if go_p:
+        perm_clean_name = clean_document_name(p_doc_name, "Permission Letter")
         st.session_state.perm_pdf = generate_permission_letter({"date": p_date.strftime("%d/%m/%Y"), "insurance_policy": p_ins, "registration": format_uk_reg(p_reg), "make_model": p_mod.upper(), "driver_name": p_name.upper(), "address": p_addr.upper(), "license_no": p_lic.upper(), "start_date": p_start.strftime("%d/%m/%Y"), "end_date": p_end.strftime("%d/%m/%Y")})
-        st.session_state.perm_filename = clean_document_name(p_doc_name, "Permission Letter")
+        st.session_state.perm_filename = perm_clean_name
+        add_audit_log("Permission Letter Generated", details=f"Driver: {p_name.upper()}, Reg: {format_uk_reg(p_reg)}", doc_name=f"{perm_clean_name}.pdf")
         st.rerun()
     if st.session_state.perm_pdf: st.download_button("📥 Download Permission Letter PDF", data=st.session_state.perm_pdf, file_name=f"{st.session_state.perm_filename}.pdf", mime="application/pdf", key="dl_perm_btn")
 
@@ -1118,7 +1185,9 @@ with tab2:
         c_doc_name = st.text_input("Document Name", default_c_doc_name, key="contract_document_name")
         go_c = st.form_submit_button("🖨️ Generate 2-Page Contract PDF", type="primary")
     if go_c:
+        contract_clean_name = clean_document_name(c_doc_name, "Contract")
         hirer_sig_bytes = st.session_state.ocr_signature_bytes if c_hirer_sig == "Scanned Licence Signature" else None
         st.session_state.pending_contract = {"contract_no": c_no.strip().upper() or "N/A", "date": c_date.strftime("%d/%m/%Y"), "driver_name": c_name.strip().upper(), "address": normalize_address(c_addr), "postcode": c_post.strip().upper(), "dob": c_dob.strip(), "license_no": c_lic.strip().upper(), "expiry_date": c_exp.strip(), "issuing_authority": c_auth.strip().upper(), "phone": c_ph.strip(), "email": c_em.strip().upper(), "rent": c_rent.strip(), "rate": c_rate.strip(), "deposit": c_dep.strip(), "start_date": c_st.strftime("%d/%m/%Y"), "expected_return": c_ret.strftime("%d/%m/%Y"), "start_time": c_start_time.strftime("%H:%M"), "return_time": c_return_time.strftime("%H:%M"), "registration": format_uk_reg(c_rv), "car_make": c_mk.strip().upper(), "car_model": c_mv.strip().upper(), "owner_signature": c_sig, "hirer_signature": hirer_sig_bytes}
-        st.session_state.contract_filename = clean_document_name(c_doc_name, "Contract")
+        st.session_state.contract_filename = contract_clean_name
+        add_audit_log("Contract Generated", details=f"Contract No: {c_no.strip().upper() or 'N/A'}, Driver: {c_name.strip().upper()}, Reg: {format_uk_reg(c_rv)}", doc_name=f"{contract_clean_name}.pdf")
         st.rerun()
