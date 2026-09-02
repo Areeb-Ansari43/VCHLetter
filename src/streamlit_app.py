@@ -245,95 +245,95 @@ if "authenticated" not in st.session_state:
 # ── Fleet data, parsing engines, PDF generators are unchanged below ──
 
 FLEET_VEHICLES = [
-    {"reg": "AF70 MYK", "model": "TESLA MODEL 3"},
-    {"reg": "BD20 XPU", "model": "MERCEDES-BENZ E300"},
-    {"reg": "BJ20 L6X", "model": "TESLA MODEL 3"},
-    {"reg": "BK70 WYM", "model": "TESLA MODEL 3"},
-    {"reg": "BL19 JDZ", "model": "MERCEDES-BENZ E220D"},
-    {"reg": "BN17 CVA", "model": "MERCEDES-BENZ VITO"},
-    {"reg": "BN20 MXL", "model": "JAGUAR I-PACE"},
-    {"reg": "BN60 MYZ", "model": "MERCEDES-BENZ E220D"},
-    {"reg": "BN60 NHP", "model": "MERCEDES-BENZ E220D"},
-    {"reg": "BT69 TEJ", "model": "TESLA MODEL 3"},
-    {"reg": "RE21 NRX", "model": "MG 5 EV"},
-    {"reg": "BU19 ACJ", "model": "MERCEDES-BENZ E220D"},
-    {"reg": "BV18 WNA", "model": "MERCEDES-BENZ E220D"},
-    {"reg": "BX19 ZMY", "model": "MERCEDES-BENZ E220D"},
-    {"reg": "CA19 UTF", "model": "MERCEDES-BENZ E220D"},
-    {"reg": "EF70 ZPZ", "model": "HYUNDAI IONIQ"},
-    {"reg": "EF70 ZVM", "model": "HYUNDAI IONIQ"},
-    {"reg": "EF70 ZYD", "model": "HYUNDAI IONIQ"},
-    {"reg": "EK70 AG0", "model": "HYUNDAI IONIQ"},
-    {"reg": "EN73 UBZ", "model": "MERCEDES-BENZ EQE 300"},
-    {"reg": "FL70 EUV", "model": "HYUNDAI IONIQ"},
-    {"reg": "FX19 FXC", "model": "MERCEDES-BENZ E220D"},
-    {"reg": "GU72 DVP", "model": "HYUNDAI IONIQ"},
-    {"reg": "GX70 UBD", "model": "JAGUAR I-PACE"},
-    {"reg": "GY69 NVL", "model": "MERCEDES-BENZ E300"},
-    {"reg": "HX19 VXB", "model": "MERCEDES-BENZ E220D"},
-    {"reg": "HX19 VZG", "model": "MERCEDES-BENZ E220D"},
-    {"reg": "KF19 UCJ", "model": "TOYOTA COROLLA"},
-    {"reg": "KF19 UCN", "model": "TOYOTA COROLLA"},
-    {"reg": "KN73 XLA", "model": "MERCEDES-BENZ EQE 300"},
-    {"reg": "KN73 XLB", "model": "MERCEDES-BENZ EQE 300"},
-    {"reg": "KO18 HKE", "model": "MERCEDES-BENZ VITO"},
-    {"reg": "KP69 WOR", "model": "MERCEDES-BENZ E220D"},
-    {"reg": "KR74 WDL", "model": "MERCEDES-BENZ EQE 350+"},
-    {"reg": "AK69 CKJ", "model": "MERCEDES-BENZ E220D"},
-    {"reg": "KT18 ATF", "model": "MERCEDES-BENZ VITO"},
-    {"reg": "KT68 VYM", "model": "MERCEDES-BENZ E220D"},
-    {"reg": "KU73 MVW", "model": "MERCEDES-BENZ E300"},
-    {"reg": "KL18 TMV", "model": "MERCEDES-BENZ VITO"},
-    {"reg": "LA69 AXF", "model": "TESLA MODEL 3"},
-    {"reg": "LA69 AYB", "model": "TESLA MODEL 3"},
-    {"reg": "LB69 OFY", "model": "TESLA MODEL 3"},
-    {"reg": "LD20 COJ", "model": "TESLA MODEL 3"},
-    {"reg": "LD20 FCE", "model": "TESLA MODEL 3"},
-    {"reg": "LL68 CRZ", "model": "TOYOTA AURIS"},
-    {"reg": "LL68 CRV", "model": "TOYOTA AURIS"},
-    {"reg": "LL68 KRJ", "model": "TOYOTA AURIS"},
-    {"reg": "LM68 KRG", "model": "TOYOTA AURIS"},
-    {"reg": "LM68 KRJ", "model": "TOYOTA AURIS"},
-    {"reg": "LM68 KRO", "model": "TOYOTA AURIS"},
-    {"reg": "LM68 KRU", "model": "TOYOTA AURIS"},
-    {"reg": "LR16 VTY", "model": "TOYOTA PRIUS"},
-    {"reg": "LR69 UCG", "model": "MERCEDES-BENZ E220D"},
-    {"reg": "LT69 GSU", "model": "TOYOTA COROLLA"},
-    {"reg": "LT69 G5V", "model": "TOYOTA COROLLA"},
-    {"reg": "LT69 GSV", "model": "TOYOTA COROLLA"},
-    {"reg": "LT69 GSZ", "model": "TOYOTA COROLLA"},
-    {"reg": "LT69 GTU", "model": "TOYOTA COROLLA"},
-    {"reg": "MD25 AYY", "model": "FORD TOURNEO CUSTOM"},
-    {"reg": "MD25 DCX", "model": "FORD TOURNEO CUSTOM"},
-    {"reg": "MJ69 YPN", "model": "TESLA MODEL 3"},
-    {"reg": "MV68 OGF", "model": "MERCEDES-BENZ E220D"},
-    {"reg": "MV68 OHB", "model": "MERCEDES-BENZ E220D"},
-    {"reg": "DU68 SXP", "model": "MERCEDES-BENZ E220D"},
-    {"reg": "OW19 XXN", "model": "MERCEDES-BENZ E220D"},
-    {"reg": "PO18 UTT", "model": "MERCEDES-BENZ E220D"},
-    {"reg": "RE21 NRV", "model": "MG 5 EV"},
-    {"reg": "RE21 NRZ", "model": "MG 5 EV"},
-    {"reg": "RE21 NSF", "model": "MG 5 EV"},
-    {"reg": "RE21 NSU", "model": "MG 5 EV"},
-    {"reg": "RX25 CME", "model": "FORD TOURNEO CUSTOM"},
-    {"reg": "SF19 WPW", "model": "MERCEDES-BENZ VITO"},
-    {"reg": "TD19 5NN", "model": "MERCEDES-BENZ E220D"},
-    {"reg": "WG74 KFJ", "model": "MERCEDES-BENZ EQE 300"},
-    {"reg": "IH74 E3F", "model": "MERCEDES-BENZ EQE 300"},
-    {"reg": "IHN2 0E3", "model": "TESLA MODEL 3"},
-    {"reg": "IN20 NKU", "model": "MERCEDES-BENZ E300"},
-    {"reg": "WR16 UED", "model": "MERCEDES-BENZ VITO"},
-    {"reg": "WR19 UFG", "model": "MERCEDES-BENZ VITO"},
-    {"reg": "YC72 HZM", "model": "MG 5 EV"},
-    {"reg": "YF22 UVZ", "model": "MG 5 EV"},
-    {"reg": "YF22 UWK", "model": "MG 5 EV"},
-    {"reg": "YF22 UWR", "model": "MG 5 EV"},
-    {"reg": "YF22 UWT", "model": "MG 5 EV"},
-    {"reg": "YF22 UWA", "model": "MG 5 EV"},
-    {"reg": "YF22 UXA", "model": "MG 5 EV"},
-    {"reg": "YF22 UXC", "model": "MG 5 EV"},
-    {"reg": "YF22 UXY", "model": "MG 5 EV"},
-    {"reg": "YH71 JHL", "model": "MG 5 EV"},
+    {"reg": "AF70 MYK", "model": "TESLA MODEL 3", "category": "Other Premium & EVs"},
+    {"reg": "AK69 CKJ", "model": "MERCEDES-BENZ E220D", "category": "Mercedes-Benz"},
+    {"reg": "BD20 XPU", "model": "MERCEDES-BENZ E300", "category": "Mercedes-Benz"},
+    {"reg": "BJ20 L6X", "model": "TESLA MODEL 3", "category": "Other Premium & EVs"},
+    {"reg": "BK70 WYM", "model": "TESLA MODEL 3", "category": "Other Premium & EVs"},
+    {"reg": "BL19 JDZ", "model": "MERCEDES-BENZ E220D", "category": "Mercedes-Benz"},
+    {"reg": "BN17 CVA", "model": "MERCEDES-BENZ VITO", "category": "Mercedes-Benz"},
+    {"reg": "BN20 MXL", "model": "JAGUAR I-PACE", "category": "Other Premium & EVs"},
+    {"reg": "BN60 MYZ", "model": "MERCEDES-BENZ E220D", "category": "Mercedes-Benz"},
+    {"reg": "BN60 NHP", "model": "MERCEDES-BENZ E220D", "category": "Mercedes-Benz"},
+    {"reg": "BT69 TEJ", "model": "TESLA MODEL 3", "category": "Other Premium & EVs"},
+    {"reg": "BU19 ACJ", "model": "MERCEDES-BENZ E220D", "category": "Mercedes-Benz"},
+    {"reg": "BV18 WNA", "model": "MERCEDES-BENZ E220D", "category": "Mercedes-Benz"},
+    {"reg": "BX19 ZMY", "model": "MERCEDES-BENZ E220D", "category": "Mercedes-Benz"},
+    {"reg": "CA19 UTF", "model": "MERCEDES-BENZ E220D", "category": "Mercedes-Benz"},
+    {"reg": "DU68 SXP", "model": "MERCEDES-BENZ E220D", "category": "Mercedes-Benz"},
+    {"reg": "EF70 ZPZ", "model": "HYUNDAI IONIQ", "category": "Other Premium & EVs"},
+    {"reg": "EF70 ZVM", "model": "HYUNDAI IONIQ", "category": "Other Premium & EVs"},
+    {"reg": "EF70 ZYD", "model": "HYUNDAI IONIQ", "category": "Other Premium & EVs"},
+    {"reg": "EK70 AG0", "model": "HYUNDAI IONIQ", "category": "Other Premium & EVs"},
+    {"reg": "EN73 UBZ", "model": "MERCEDES-BENZ EQE 300", "category": "Mercedes-Benz"},
+    {"reg": "FL70 EUV", "model": "HYUNDAI IONIQ", "category": "Other Premium & EVs"},
+    {"reg": "FX19 FXC", "model": "MERCEDES-BENZ E220D", "category": "Mercedes-Benz"},
+    {"reg": "GU72 DVP", "model": "HYUNDAI IONIQ", "category": "Other Premium & EVs"},
+    {"reg": "GX70 UBD", "model": "JAGUAR I-PACE", "category": "Other Premium & EVs"},
+    {"reg": "GY69 NVL", "model": "MERCEDES-BENZ E300", "category": "Mercedes-Benz"},
+    {"reg": "HX19 VXB", "model": "MERCEDES-BENZ E220D", "category": "Mercedes-Benz"},
+    {"reg": "HX19 VZG", "model": "MERCEDES-BENZ E220D", "category": "Mercedes-Benz"},
+    {"reg": "IH74 E3F", "model": "MERCEDES-BENZ EQE 300", "category": "Mercedes-Benz"},
+    {"reg": "IHN2 0E3", "model": "TESLA MODEL 3", "category": "Other Premium & EVs"},
+    {"reg": "IN20 NKU", "model": "MERCEDES-BENZ E300", "category": "Mercedes-Benz"},
+    {"reg": "KF19 UCJ", "model": "TOYOTA COROLLA", "category": "Toyota"},
+    {"reg": "KF19 UCN", "model": "TOYOTA COROLLA", "category": "Toyota"},
+    {"reg": "KL18 TMV", "model": "MERCEDES-BENZ VITO", "category": "Mercedes-Benz"},
+    {"reg": "KN73 XLA", "model": "MERCEDES-BENZ EQE 300", "category": "Mercedes-Benz"},
+    {"reg": "KN73 XLB", "model": "MERCEDES-BENZ EQE 300", "category": "Mercedes-Benz"},
+    {"reg": "KO18 HKE", "model": "MERCEDES-BENZ VITO", "category": "Mercedes-Benz"},
+    {"reg": "KP69 WOR", "model": "MERCEDES-BENZ E220D", "category": "Mercedes-Benz"},
+    {"reg": "KR74 WDL", "model": "MERCEDES-BENZ EQE 350+", "category": "Mercedes-Benz"},
+    {"reg": "KT18 ATF", "model": "MERCEDES-BENZ VITO", "category": "Mercedes-Benz"},
+    {"reg": "KT68 VYM", "model": "MERCEDES-BENZ E220D", "category": "Mercedes-Benz"},
+    {"reg": "KU73 MVW", "model": "MERCEDES-BENZ E300", "category": "Mercedes-Benz"},
+    {"reg": "LA69 AXF", "model": "TESLA MODEL 3", "category": "Other Premium & EVs"},
+    {"reg": "LA69 AYB", "model": "TESLA MODEL 3", "category": "Other Premium & EVs"},
+    {"reg": "LB69 OFY", "model": "TESLA MODEL 3", "category": "Other Premium & EVs"},
+    {"reg": "LD20 COJ", "model": "TESLA MODEL 3", "category": "Other Premium & EVs"},
+    {"reg": "LD20 FCE", "model": "TESLA MODEL 3", "category": "Other Premium & EVs"},
+    {"reg": "LL68 CRV", "model": "TOYOTA AURIS", "category": "Toyota"},
+    {"reg": "LL68 CRZ", "model": "TOYOTA AURIS", "category": "Toyota"},
+    {"reg": "LL68 KRJ", "model": "TOYOTA AURIS", "category": "Toyota"},
+    {"reg": "LM68 KRG", "model": "TOYOTA AURIS", "category": "Toyota"},
+    {"reg": "LM68 KRJ", "model": "TOYOTA AURIS", "category": "Toyota"},
+    {"reg": "LM68 KRO", "model": "TOYOTA AURIS", "category": "Toyota"},
+    {"reg": "LM68 KRU", "model": "TOYOTA AURIS", "category": "Toyota"},
+    {"reg": "LR16 VTY", "model": "TOYOTA PRIUS", "category": "Toyota"},
+    {"reg": "LR69 UCG", "model": "MERCEDES-BENZ E220D", "category": "Mercedes-Benz"},
+    {"reg": "LT69 G5V", "model": "TOYOTA COROLLA", "category": "Toyota"},
+    {"reg": "LT69 GSU", "model": "TOYOTA COROLLA", "category": "Toyota"},
+    {"reg": "LT69 GSV", "model": "TOYOTA COROLLA", "category": "Toyota"},
+    {"reg": "LT69 GSZ", "model": "TOYOTA COROLLA", "category": "Toyota"},
+    {"reg": "LT69 GTU", "model": "TOYOTA COROLLA", "category": "Toyota"},
+    {"reg": "MD25 AYY", "model": "FORD TOURNEO CUSTOM", "category": "Other Premium & EVs"},
+    {"reg": "MD25 DCX", "model": "FORD TOURNEO CUSTOM", "category": "Other Premium & EVs"},
+    {"reg": "MJ69 YPN", "model": "TESLA MODEL 3", "category": "Other Premium & EVs"},
+    {"reg": "MV68 OGF", "model": "MERCEDES-BENZ E220D", "category": "Mercedes-Benz"},
+    {"reg": "MV68 OHB", "model": "MERCEDES-BENZ E220D", "category": "Mercedes-Benz"},
+    {"reg": "OW19 XXN", "model": "MERCEDES-BENZ E220D", "category": "Mercedes-Benz"},
+    {"reg": "PO18 UTT", "model": "MERCEDES-BENZ E220D", "category": "Mercedes-Benz"},
+    {"reg": "RE21 NRV", "model": "MG 5 EV", "category": "Other Premium & EVs"},
+    {"reg": "RE21 NRX", "model": "MG 5 EV", "category": "Other Premium & EVs"},
+    {"reg": "RE21 NRZ", "model": "MG 5 EV", "category": "Other Premium & EVs"},
+    {"reg": "RE21 NSF", "model": "MG 5 EV", "category": "Other Premium & EVs"},
+    {"reg": "RE21 NSU", "model": "MG 5 EV", "category": "Other Premium & EVs"},
+    {"reg": "RX25 CME", "model": "FORD TOURNEO CUSTOM", "category": "Other Premium & EVs"},
+    {"reg": "SF19 WPW", "model": "MERCEDES-BENZ VITO", "category": "Mercedes-Benz"},
+    {"reg": "TD19 5NN", "model": "MERCEDES-BENZ E220D", "category": "Mercedes-Benz"},
+    {"reg": "WG74 KFJ", "model": "MERCEDES-BENZ EQE 300", "category": "Mercedes-Benz"},
+    {"reg": "WR16 UED", "model": "MERCEDES-BENZ VITO", "category": "Mercedes-Benz"},
+    {"reg": "WR19 UFG", "model": "MERCEDES-BENZ VITO", "category": "Mercedes-Benz"},
+    {"reg": "YC72 HZM", "model": "MG 5 EV", "category": "Other Premium & EVs"},
+    {"reg": "YF22 UVZ", "model": "MG 5 EV", "category": "Other Premium & EVs"},
+    {"reg": "YF22 UWA", "model": "MG 5 EV", "category": "Other Premium & EVs"},
+    {"reg": "YF22 UWK", "model": "MG 5 EV", "category": "Other Premium & EVs"},
+    {"reg": "YF22 UWR", "model": "MG 5 EV", "category": "Other Premium & EVs"},
+    {"reg": "YF22 UWT", "model": "MG 5 EV", "category": "Other Premium & EVs"},
+    {"reg": "YF22 UXA", "model": "MG 5 EV", "category": "Other Premium & EVs"},
+    {"reg": "YF22 UXC", "model": "MG 5 EV", "category": "Other Premium & EVs"},
+    {"reg": "YF22 UXY", "model": "MG 5 EV", "category": "Other Premium & EVs"},
+    {"reg": "YH71 JHL", "model": "MG 5 EV", "category": "Other Premium & EVs"},
 ]
 
 # ─────────────────────────────────────────────
@@ -1095,18 +1095,62 @@ with col_scan:
         st.error("Neither Azure Document Intelligence (secrets not configured) nor pytesseract is available, so scanning can't run.")
 
 with col_fleet:
-    opts = ["-- Manual Entry --"] + [f"{v['reg']} ({v['model']})" for v in FLEET_VEHICLES]
-    cur = next((o for o in opts if o.startswith(st.session_state.sel_reg)), "-- Manual Entry --") if st.session_state.sel_reg else "-- Manual Entry --"
-    chosen = st.selectbox("🚗 Select Fleet Vehicle", opts, index=opts.index(cur), key="global_engine_fleet")
+    st.markdown("##### 🚗 Fleet Vehicle Search & Selector")
+
+    # Category Filter Pills / Radio
+    cat_filter = st.radio(
+        "Filter Category",
+        ["All Vehicles", "Mercedes-Benz", "Toyota", "Other Premium & EVs"],
+        horizontal=True,
+        key="fleet_category_filter"
+    )
+
+    # Text Search Bar
+    search_term = st.text_input("🔍 Search Reg or Model", placeholder="e.g. AF70, E220D, Tesla...", key="fleet_search_term")
+
+    # Filter FLEET_VEHICLES based on category and search query
+    filtered_vehicles = FLEET_VEHICLES
+    if cat_filter != "All Vehicles":
+        filtered_vehicles = [v for v in filtered_vehicles if v.get("category") == cat_filter]
+
+    if search_term.strip():
+        term = search_term.strip().upper()
+        filtered_vehicles = [
+            v for v in filtered_vehicles
+            if term in v["reg"].upper() or term in v["model"].upper()
+        ]
+
+    opts = ["-- Manual Entry --"] + [f"{v['reg']} ({v['model']})" for v in filtered_vehicles]
+
+    # Handle current selection preservation when filtering
+    cur = "-- Manual Entry --"
+    if st.session_state.sel_reg:
+        matched_opt = next((o for o in opts if o.startswith(st.session_state.sel_reg)), None)
+        if matched_opt:
+            cur = matched_opt
+        else:
+            # If current selection isn't in filtered list, offer it as selected option
+            selected_car = next((v for v in FLEET_VEHICLES if v["reg"] == st.session_state.sel_reg), None)
+            if selected_car:
+                cur_label = f"{selected_car['reg']} ({selected_car['model']})"
+                opts.insert(1, cur_label)
+                cur = cur_label
+
+    chosen = st.selectbox(f"Select Vehicle ({len(filtered_vehicles)} found)", opts, index=opts.index(cur), key="global_engine_fleet")
+
     if chosen != "-- Manual Entry --":
         rk = chosen.split(" (")[0]
         if st.session_state.sel_reg != rk:
             car = next((v for v in FLEET_VEHICLES if v["reg"] == rk), None)
             if car:
-                st.session_state.sel_reg = car["reg"]; st.session_state.sel_make, st.session_state.sel_model = split_make_model(car["model"])
-                st.session_state.fleet_msg = f"✅ Fleet specs synchronized!"; st.rerun()
+                st.session_state.sel_reg = car["reg"]
+                st.session_state.sel_make, st.session_state.sel_model = split_make_model(car["model"])
+                st.session_state.fleet_msg = f"✅ Fleet specs synchronized: {car['reg']} ({car['model']})"
+                st.rerun()
     elif st.session_state.sel_reg:
-        st.session_state.sel_reg = st.session_state.sel_make = st.session_state.sel_model = ""; st.session_state.fleet_msg = ""; st.rerun()
+        st.session_state.sel_reg = st.session_state.sel_make = st.session_state.sel_model = ""
+        st.session_state.fleet_msg = ""
+        st.rerun()
 
 st.markdown("---")
 if st.session_state.pending_contract:
