@@ -31,11 +31,134 @@ except ImportError:
     DocumentIntelligenceClient = None
     AnalyzeDocumentRequest = None
 
-import base64, json
+import base64, json, urllib.parse
 from reportlab.lib.utils import simpleSplit
 
 SRC_DIR = os.path.dirname(os.path.abspath(__file__))
 AUDIT_LOG_FILE = os.path.join(SRC_DIR, "audit_logs.json")
+
+# ─────────────────────────────────────────────
+#  SUPABASE & GOOGLE DRIVE INTEGRATIONS
+# ─────────────────────────────────────────────
+def get_supabase_client():
+    try:
+        from supabase import create_client
+        url = st.secrets.get("SUPABASE_URL", "https://hhpkffratbbnwedjlebx.supabase.co")
+        key = st.secrets.get("SUPABASE_KEY") or st.secrets.get("SUPABASE_SERVICE_ROLE_KEY") or st.secrets.get("SUPABASE_ANON_KEY")
+        if not url or not key:
+            return None
+        return create_client(url, key)
+    except Exception:
+        return None
+
+def sync_document_to_supabase(pdf_bytes: bytes, doc_type: str, driver_name: str, registration: str, doc_filename: str):
+    try:
+        client = get_supabase_client()
+        if not client:
+            return False, "Supabase credentials not configured in secrets."
+
+        bucket_name = "driver_documents"
+        clean_reg = re.sub(r"[^A-Za-z0-9]", "", registration).upper() if registration else "GENERAL"
+        file_name = f"{doc_filename}.pdf" if not doc_filename.endswith(".pdf") else doc_filename
+        storage_path = f"{clean_reg}/{file_name}"
+
+        try:
+            client.storage.from_(bucket_name).upload(
+                path=storage_path,
+                file=pdf_bytes,
+                file_options={"content-type": "application/pdf", "upsert": "true"}
+            )
+        except Exception:
+            pass
+
+        db_record = {
+            "driver_name": driver_name,
+            "registration": registration,
+            "document_type": doc_type,
+            "file_path": storage_path,
+            "created_at": datetime.now().isoformat(),
+        }
+
+        try:
+            client.table("driver_documents").insert(db_record).execute()
+        except Exception:
+            pass
+
+        return True, f"Synced {file_name} to Supabase."
+    except Exception as e:
+        return False, f"Supabase sync failed: {e}"
+
+def upload_to_google_drive(pdf_bytes: bytes, filename: str, registration: str):
+    try:
+        from google.oauth2 import service_account
+        from googleapiclient.discovery import build
+        from googleapiclient.http import MediaIoBaseUpload
+
+        creds_dict = None
+        for key in ["GCP_SERVICE_ACCOUNT", "GOOGLE_DRIVE_CREDENTIALS", "gcp_service_account"]:
+            if key in st.secrets:
+                creds_dict = dict(st.secrets[key])
+                break
+
+        if not creds_dict:
+            return False, "Google Drive service account credentials not configured in Streamlit secrets."
+
+        if "private_key" in creds_dict and "\\n" in creds_dict["private_key"]:
+            creds_dict["private_key"] = creds_dict["private_key"].replace("\\n", "\n")
+
+        SCOPES = ["https://www.googleapis.com/auth/drive"]
+        credentials = service_account.Credentials.from_service_account_info(creds_dict, scopes=SCOPES)
+        service = build("drive", "v3", credentials=credentials)
+
+        clean_reg = re.sub(r"[^A-Za-z0-9]", "", registration).upper() if registration else ""
+
+        folder_id = None
+        if clean_reg:
+            query = f"mimeType = 'application/vnd.google-apps.folder' and (name contains '{clean_reg}' or name contains '{registration}') and trashed = false"
+            results = service.files().list(q=query, spaces='drive', fields='files(id, name)', supportsAllDrives=True, includeItemsFromAllDrives=True).execute()
+            items = results.get('files', [])
+            if items:
+                folder_id = items[0]['id']
+
+        file_metadata = {
+            'name': f"{filename}.pdf" if not filename.endswith(".pdf") else filename,
+        }
+        if folder_id:
+            file_metadata['parents'] = [folder_id]
+
+        media = MediaIoBaseUpload(io.BytesIO(pdf_bytes), mimetype='application/pdf', resumable=True)
+        service.files().create(
+            body=file_metadata,
+            media_body=media,
+            fields='id',
+            supportsAllDrives=True
+        ).execute()
+
+        folder_msg = f"in folder for {clean_reg}" if folder_id else "in Google Drive"
+        return True, f"Saved {filename}.pdf {folder_msg}."
+    except Exception as e:
+        return False, f"Google Drive upload error: {e}"
+
+def build_auto_doc_name(prefix: str, name: str, reg: str) -> str:
+    clean_n = clean_name(name) if name else ""
+    clean_r = re.sub(r"[^A-Za-z0-9]", "", reg).upper() if reg else ""
+    parts = [prefix]
+    if clean_n:
+        parts.append(clean_n)
+    if clean_r:
+        parts.append(clean_r)
+    return " ".join(parts)
+
+def render_whatsapp_share_section(customer_name: str, doc_type: str):
+    display_name = customer_name.title() if customer_name else "Customer"
+    msg_text = f"Hey {display_name}, here's your {doc_type.lower()}. You may download this and send it to your platform."
+    encoded_text = urllib.parse.quote(msg_text)
+    wa_url = f"https://wa.me/?text={encoded_text}"
+
+    st.markdown("---")
+    st.markdown("#### 💬 Share via WhatsApp")
+    st.info(f"**Pre-filled Message:**\n\n\"{msg_text}\"\n\nℹ️ *Message will open in WhatsApp — attach the downloaded PDF before sending.*")
+    st.link_button("📱 Open WhatsApp to Send", wa_url, use_container_width=True)
 
 def get_audit_logs():
     if not os.path.exists(AUDIT_LOG_FILE):
@@ -1034,7 +1157,7 @@ with st.sidebar:
 # ─────────────────────────────────────────────
 #  SECURED MASTER WORKSPACE
 # ─────────────────────────────────────────────
-for k, v in dict(ocr_name="", ocr_licence="", ocr_address="", ocr_postcode="", ocr_dob="", ocr_expiry="", ocr_signature_bytes=None, last_scan_id="", sel_reg="", sel_make="", sel_model="", scan_msg="", fleet_msg="", perm_pdf=None, perm_filename="Permission Letter", contract_pdf=None, contract_filename="Contract", contract_no="", pending_contract=None).items():
+for k, v in dict(ocr_name="", ocr_licence="", ocr_address="", ocr_postcode="", ocr_dob="", ocr_expiry="", ocr_signature_bytes=None, last_scan_id="", sel_reg="", sel_make="", sel_model="", scan_msg="", fleet_msg="", perm_pdf=None, perm_filename="Permission Letter", contract_pdf=None, contract_filename="Contract", contract_no="", pending_contract=None, perm_driver_name="", perm_reg="", contract_driver_name="", contract_reg="").items():
     if k not in st.session_state: st.session_state[k] = v
 
 col_head1, col_head2 = st.columns([3, 1])
@@ -1102,8 +1225,9 @@ with col_scan:
                     st.session_state.ocr_name, st.session_state.ocr_licence, st.session_state.ocr_address, st.session_state.ocr_postcode, st.session_state.ocr_dob, st.session_state.ocr_expiry = client_name, p["licence"], p["address"], p["postcode"], p["dob"], p["expiry"]
                     st.session_state.ocr_signature_bytes = p.get("signature_bytes")
                     if client_name:
-                        st.session_state.perm_filename = clean_document_name(f"{client_name} Permission Letter", "Permission Letter")
-                        st.session_state.contract_filename = clean_document_name(f"{client_name} Contract", "Contract")
+                        reg_val = st.session_state.sel_reg or ""
+                        st.session_state.perm_filename = clean_document_name(build_auto_doc_name("Permission", client_name, reg_val), "Permission Letter")
+                        st.session_state.contract_filename = clean_document_name(build_auto_doc_name("Contract", client_name, reg_val), "Contract")
                     st.session_state.scan_msg = "✅ Licence scanned successfully! Please double-check the fields below before generating documents."
                 except Exception as e: st.session_state.scan_msg = f"⚠️ Scan parsing failed: {e}"
                 st.session_state.last_scan_id = fid
@@ -1172,9 +1296,21 @@ with col_fleet:
 st.markdown("---")
 if st.session_state.pending_contract:
     try:
-        st.session_state.contract_pdf = generate_contract(st.session_state.pending_contract)
+        pdf_bytes = generate_contract(st.session_state.pending_contract)
+        st.session_state.contract_pdf = pdf_bytes
         st.session_state.contract_no = st.session_state.pending_contract["contract_no"]
         st.session_state.contract_filename = st.session_state.contract_filename or "Contract"
+
+        # Sync to Supabase silently in addition to download
+        sync_ok, sync_msg = sync_document_to_supabase(
+            pdf_bytes=pdf_bytes,
+            doc_type="Contract",
+            driver_name=st.session_state.pending_contract.get("driver_name", ""),
+            registration=st.session_state.pending_contract.get("registration", ""),
+            doc_filename=st.session_state.contract_filename
+        )
+        if sync_ok:
+            notify(sync_msg, "info", seconds=5)
     except Exception as e: st.error(f"Render Error: {e}")
     finally: st.session_state.pending_contract = None
 
@@ -1188,16 +1324,45 @@ with tab1:
             p_name, p_lic, p_start, p_end = st.text_input("Driver Full Name", value=st.session_state.ocr_name), st.text_input("Driving Licence No", value=st.session_state.ocr_licence), st.date_input("Hire Start Date", datetime.now(), format="DD/MM/YYYY", key="p_form_start"), st.date_input("Hire End Date", datetime.now(), format="DD/MM/YYYY", key="p_form_end")
         perm_addr_val = get_full_address(st.session_state.ocr_address, st.session_state.ocr_postcode)
         p_addr = st.text_area("Driver Address", value=perm_addr_val)
-        default_p_doc_name = f"{st.session_state.ocr_name} Permission Letter".strip() if st.session_state.ocr_name else "Permission Letter"
+        default_p_doc_name = build_auto_doc_name("Permission", st.session_state.ocr_name, p_reg or st.session_state.sel_reg) if (st.session_state.ocr_name or p_reg or st.session_state.sel_reg) else "Permission Letter"
         p_doc_name = st.text_input("Document Name", default_p_doc_name, key="perm_document_name")
         go_p = st.form_submit_button("🖨️ Generate Permission Letter PDF")
     if go_p:
         perm_clean_name = clean_document_name(p_doc_name, "Permission Letter")
-        st.session_state.perm_pdf = generate_permission_letter({"date": p_date.strftime("%d/%m/%Y"), "insurance_policy": p_ins, "registration": format_uk_reg(p_reg), "make_model": p_mod.upper(), "driver_name": p_name.upper(), "address": p_addr.upper(), "license_no": p_lic.upper(), "start_date": p_start.strftime("%d/%m/%Y"), "end_date": p_end.strftime("%d/%m/%Y")})
+        pdf_bytes = generate_permission_letter({"date": p_date.strftime("%d/%m/%Y"), "insurance_policy": p_ins, "registration": format_uk_reg(p_reg), "make_model": p_mod.upper(), "driver_name": p_name.upper(), "address": p_addr.upper(), "license_no": p_lic.upper(), "start_date": p_start.strftime("%d/%m/%Y"), "end_date": p_end.strftime("%d/%m/%Y")})
+        st.session_state.perm_pdf = pdf_bytes
         st.session_state.perm_filename = perm_clean_name
+        st.session_state.perm_driver_name = p_name.strip().upper()
+        st.session_state.perm_reg = format_uk_reg(p_reg)
         add_audit_log("Permission Letter Generated", details=f"Driver: {p_name.upper()}, Reg: {format_uk_reg(p_reg)}", doc_name=f"{perm_clean_name}.pdf")
+
+        # Sync to Supabase silently in addition to download
+        sync_ok, sync_msg = sync_document_to_supabase(
+            pdf_bytes=pdf_bytes,
+            doc_type="Permission Letter",
+            driver_name=p_name.strip().upper(),
+            registration=format_uk_reg(p_reg),
+            doc_filename=perm_clean_name
+        )
+        if sync_ok:
+            notify(sync_msg, "info", seconds=5)
+
         st.rerun()
-    if st.session_state.perm_pdf: st.download_button("📥 Download Permission Letter PDF", data=st.session_state.perm_pdf, file_name=f"{st.session_state.perm_filename}.pdf", mime="application/pdf", key="dl_perm_btn")
+
+    if st.session_state.perm_pdf:
+        p_col1, p_col2 = st.columns([1, 1])
+        with p_col1:
+            st.download_button("📥 Download Permission Letter PDF", data=st.session_state.perm_pdf, file_name=f"{st.session_state.perm_filename}.pdf", mime="application/pdf", key="dl_perm_btn", use_container_width=True)
+        with p_col2:
+            if st.button("☁️ Save to Google Drive", key="gdrive_perm_btn", use_container_width=True):
+                with st.spinner("Uploading to Google Drive..."):
+                    gd_ok, gd_msg = upload_to_google_drive(st.session_state.perm_pdf, st.session_state.perm_filename, st.session_state.perm_reg)
+                    if gd_ok:
+                        notify(f"✅ {gd_msg}", "success")
+                    else:
+                        notify(f"⚠️ {gd_msg}", "error")
+
+        render_whatsapp_share_section(st.session_state.perm_driver_name, "Permission Letter")
 
 with tab2:
     with st.expander("🧭 Field positions off? Calibrate them"):
@@ -1212,7 +1377,19 @@ with tab2:
 
     if st.session_state.contract_pdf:
         notify("🎉 Contract PDF Created Successfully!", "success")
-        st.download_button("📥 Download Generated Contract PDF", data=st.session_state.contract_pdf, file_name=f"{st.session_state.contract_filename}.pdf", mime="application/pdf", key="dl_contract_btn")
+        c_dl_col1, c_dl_col2 = st.columns([1, 1])
+        with c_dl_col1:
+            st.download_button("📥 Download Generated Contract PDF", data=st.session_state.contract_pdf, file_name=f"{st.session_state.contract_filename}.pdf", mime="application/pdf", key="dl_contract_btn", use_container_width=True)
+        with c_dl_col2:
+            if st.button("☁️ Save to Google Drive", key="gdrive_contract_btn", use_container_width=True):
+                with st.spinner("Uploading to Google Drive..."):
+                    gd_ok, gd_msg = upload_to_google_drive(st.session_state.contract_pdf, st.session_state.contract_filename, st.session_state.contract_reg)
+                    if gd_ok:
+                        notify(f"✅ {gd_msg}", "success")
+                    else:
+                        notify(f"⚠️ {gd_msg}", "error")
+
+        render_whatsapp_share_section(st.session_state.contract_driver_name, "Contract")
         st.markdown("---")
     with st.form("contract_form"):
         st.subheader("Hirer Details")
@@ -1242,7 +1419,7 @@ with tab2:
             c_hirer_sig = st.selectbox("✍️ Hirer Signature", hirer_sig_options)
         with sig_col2:
             c_sig = st.selectbox("✍️ Owner Signature", SIGNATURE_OPTIONS)
-        default_c_doc_name = f"{st.session_state.ocr_name} Contract".strip() if st.session_state.ocr_name else "Contract"
+        default_c_doc_name = build_auto_doc_name("Contract", st.session_state.ocr_name, c_rv or st.session_state.sel_reg) if (st.session_state.ocr_name or c_rv or st.session_state.sel_reg) else "Contract"
         c_doc_name = st.text_input("Document Name", default_c_doc_name, key="contract_document_name")
         go_c = st.form_submit_button("🖨️ Generate 2-Page Contract PDF", type="primary")
     if go_c:
@@ -1250,5 +1427,7 @@ with tab2:
         hirer_sig_bytes = st.session_state.ocr_signature_bytes if c_hirer_sig == "Scanned Licence Signature" else None
         st.session_state.pending_contract = {"contract_no": c_no.strip().upper() or "N/A", "date": c_date.strftime("%d/%m/%Y"), "driver_name": c_name.strip().upper(), "address": normalize_address(c_addr), "postcode": c_post.strip().upper(), "dob": c_dob.strip(), "license_no": c_lic.strip().upper(), "expiry_date": c_exp.strip(), "issuing_authority": c_auth.strip().upper(), "phone": c_ph.strip(), "email": c_em.strip().upper(), "rent": c_rent.strip(), "rate": c_rate.strip(), "deposit": c_dep.strip(), "start_date": c_st.strftime("%d/%m/%Y"), "expected_return": c_ret.strftime("%d/%m/%Y"), "start_time": c_start_time.strftime("%H:%M"), "return_time": c_return_time.strftime("%H:%M"), "registration": format_uk_reg(c_rv), "car_make": c_mk.strip().upper(), "car_model": c_mv.strip().upper(), "owner_signature": c_sig, "hirer_signature": hirer_sig_bytes}
         st.session_state.contract_filename = contract_clean_name
+        st.session_state.contract_driver_name = c_name.strip().upper()
+        st.session_state.contract_reg = format_uk_reg(c_rv)
         add_audit_log("Contract Generated", details=f"Contract No: {c_no.strip().upper() or 'N/A'}, Driver: {c_name.strip().upper()}, Reg: {format_uk_reg(c_rv)}", doc_name=f"{contract_clean_name}.pdf")
         st.rerun()
