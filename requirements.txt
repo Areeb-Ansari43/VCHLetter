@@ -7,3 +7,8 @@ numpy
 extra-streamlit-components
 azure-ai-documentintelligence
 azure-core
+supabase
+google-api-python-client
+google-auth
+google-auth-httplib2
+google-auth-oauthlib
