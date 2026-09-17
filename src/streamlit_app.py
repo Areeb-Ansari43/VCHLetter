@@ -101,19 +101,22 @@ components.html("""
 <script>
 (function() {
     const desiredTitle = "FA-IBI Workspace";
-    function applyTitle() {
-        try {
-            if (window.parent.document.title !== desiredTitle) {
-                window.parent.document.title = desiredTitle;
-            }
-        } catch (e) {}
-    }
-    applyTitle();
     try {
-        const titleEl = window.parent.document.querySelector('title');
-        if (titleEl) new MutationObserver(applyTitle).observe(titleEl, { childList: true });
+        const pDoc = window.parent.document;
+        if (pDoc && pDoc.title !== desiredTitle) {
+            pDoc.title = desiredTitle;
+        }
+        if (window.parent && !window.parent.__title_observer_installed) {
+            window.parent.__title_observer_installed = true;
+            setInterval(function() {
+                try {
+                    if (window.parent.document.title !== desiredTitle) {
+                        window.parent.document.title = desiredTitle;
+                    }
+                } catch (e) {}
+            }, 1000);
+        }
     } catch (e) {}
-    setInterval(applyTitle, 300);
 })();
 </script>
 """, height=0, width=0)
@@ -226,9 +229,14 @@ AUTH_COOKIE_NAME = "fa_ibi_auth"
 AUTH_COOKIE_DAYS = 30
 
 if stx is not None:
-    cookie_manager = stx.CookieManager(key="fa_ibi_cookie_manager")
+    try:
+        cookie_manager = stx.CookieManager()
+    except Exception:
+        cookie_manager = None
 else:
     cookie_manager = None
+
+if cookie_manager is None and stx is None:
     st.warning(
         "⚠️ `extra-streamlit-components` isn't installed, so login can't persist "
         "across refreshes. Add `extra-streamlit-components` to requirements.txt "
@@ -238,9 +246,15 @@ else:
 
 if "authenticated" not in st.session_state:
     st.session_state.authenticated = False
-    if cookie_manager is not None:
-        cookies = cookie_manager.get_all(key="init_cookie_read") or {}
-        st.session_state.authenticated = cookies.get(AUTH_COOKIE_NAME) == "true"
+
+if not st.session_state.authenticated and cookie_manager is not None:
+    try:
+        cookies = cookie_manager.get_all()
+        if isinstance(cookies, dict) and cookies.get(AUTH_COOKIE_NAME) == "true":
+            st.session_state.authenticated = True
+            st.rerun()
+    except Exception:
+        pass
 
 # ── Fleet data, parsing engines, PDF generators are unchanged below ──
 
@@ -451,17 +465,20 @@ def _best_ocr_text(bw_img: Image.Image) -> str:
     best_text, best_conf = "", -1.0
     for cfg in configs:
         try:
-            data = pytesseract.image_to_data(bw_img, config=cfg, output_type=pytesseract.Output.DICT)
+            data = pytesseract.image_to_data(bw_img, config=cfg, output_type=pytesseract.Output.DICT, timeout=10)
             confs = [float(c) for c in data.get("conf", []) if str(c) not in ("-1", "")]
             avg_conf = sum(confs) / len(confs) if confs else 0.0
             text = " ".join(w for w in data.get("text", []) if w.strip())
             if text.strip() and avg_conf > best_conf:
                 best_conf = avg_conf
-                best_text = pytesseract.image_to_string(bw_img, config=cfg)
+                best_text = pytesseract.image_to_string(bw_img, config=cfg, timeout=10)
         except Exception:
             continue
     if not best_text:
-        best_text = pytesseract.image_to_string(bw_img, config=r"--oem 3 --psm 6")
+        try:
+            best_text = pytesseract.image_to_string(bw_img, config=r"--oem 3 --psm 6", timeout=10)
+        except Exception:
+            best_text = ""
     return best_text
 
 def run_ocr(uploaded_file) -> str:
@@ -641,7 +658,7 @@ def run_ocr_azure(uploaded_file) -> dict:
         "prebuilt-idDocument",
         AnalyzeDocumentRequest(bytes_source=img_bytes),
     )
-    result = poller.result()
+    result = poller.result(timeout=30)
 
     if not result.documents:
         raise ValueError("Azure couldn't detect an ID document in this photo.")
