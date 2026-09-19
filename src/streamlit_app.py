@@ -31,7 +31,21 @@ except ImportError:
     DocumentIntelligenceClient = None
     AnalyzeDocumentRequest = None
 
-import base64, json
+try:
+    from supabase import create_client
+except ImportError:
+    create_client = None
+
+try:
+    from google.oauth2 import service_account
+    from googleapiclient.discovery import build
+    from googleapiclient.http import MediaIoBaseUpload
+except ImportError:
+    service_account = None
+    build = None
+    MediaIoBaseUpload = None
+
+import base64, json, urllib.parse
 from reportlab.lib.utils import simpleSplit
 
 SRC_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -60,6 +74,136 @@ def add_audit_log(event_type: str, details: str = "", doc_name: str = ""):
             json.dump(logs, f, indent=2)
     except Exception as e:
         pass
+
+def render_whatsapp_share_section(customer_name: str, doc_type: str, key_prefix: str):
+    """Render WhatsApp share section with pre-filled wa.me link without recipient pre-selected."""
+    name_str = customer_name.strip() if customer_name and customer_name.strip() else "Driver"
+    message_text = f"Hey {name_str}, here's your {doc_type.lower()}. You may download this and send it to your platform."
+    encoded_text = urllib.parse.quote(message_text)
+    wa_url = f"https://wa.me/?text={encoded_text}"
+
+    with st.expander("💬 Share via WhatsApp", expanded=True):
+        st.markdown(f"**Pre-filled Message:**\n> {message_text}")
+        st.markdown(f"[📲 Open WhatsApp Contact Picker]({wa_url})", unsafe_allow_html=True)
+        st.caption("⚠️ **Note:** WhatsApp's link protocol cannot attach files automatically. The message will open in WhatsApp — please attach the downloaded PDF before sending.")
+
+def save_to_google_drive(file_bytes: bytes, filename: str, vehicle_reg: str) -> tuple[bool, str]:
+    """Upload generated PDF to Google Drive under folder matching car's registration.
+
+    Returns (success, message). Must not break main page flow if upload fails.
+    """
+    if build is None or service_account is None or MediaIoBaseUpload is None:
+        return False, "Google Drive client libraries are not installed."
+
+    try:
+        # Load Google service account credentials from st.secrets
+        creds_data = st.secrets.get("gcp_service_account") or st.secrets.get("GOOGLE_DRIVE_CREDENTIALS") or st.secrets.get("GDRIVE_SERVICE_ACCOUNT")
+        if not creds_data:
+            return False, "Google Drive API credentials not found in secrets (`gcp_service_account`)."
+
+        if isinstance(creds_data, str):
+            creds_info = json.loads(creds_data)
+        elif hasattr(creds_data, "to_dict"):
+            creds_info = creds_data.to_dict()
+        else:
+            creds_info = dict(creds_data)
+
+        scopes = ["https://www.googleapis.com/auth/drive.file", "https://www.googleapis.com/auth/drive"]
+        creds = service_account.Credentials.from_service_account_info(creds_info, scopes=scopes)
+
+        # Optional domain-wide delegation for virtualcarhire@gmail.com if configured
+        target_email = st.secrets.get("GDRIVE_IMPERSONATE_EMAIL", "virtualcarhire@gmail.com")
+        if creds_info.get("type") == "service_account" and target_email:
+            try:
+                creds = creds.with_subject(target_email)
+            except Exception:
+                pass
+
+        service = build("drive", "v3", credentials=creds)
+
+        folder_name = vehicle_reg.strip().upper() if vehicle_reg and vehicle_reg.strip() else "Uncategorized"
+
+        # Search for existing folder with vehicle registration name
+        query = f"mimeType = 'application/vnd.google-apps.folder' and name = '{folder_name}' and trashed = false"
+        results = service.files().list(q=query, fields="files(id, name)").execute()
+        folders = results.get("files", [])
+
+        if folders:
+            folder_id = folders[0]["id"]
+        else:
+            # Create folder for vehicle registration
+            folder_metadata = {
+                "name": folder_name,
+                "mimeType": "application/vnd.google-apps.folder"
+            }
+            folder = service.files().create(body=folder_metadata, fields="id").execute()
+            folder_id = folder.get("id")
+
+        # Upload PDF file into the folder
+        file_name_pdf = f"{filename}.pdf" if not filename.endswith(".pdf") else filename
+        file_metadata = {
+            "name": file_name_pdf,
+            "parents": [folder_id]
+        }
+
+        media = MediaIoBaseUpload(io.BytesIO(file_bytes), mimetype="application/pdf", resumable=True)
+        uploaded_file = service.files().create(
+            body=file_metadata,
+            media_body=media,
+            fields="id, webViewLink"
+        ).execute()
+
+        return True, f"Successfully saved '{file_name_pdf}' to Google Drive folder '{folder_name}'."
+    except Exception as e:
+        return False, f"Google Drive upload failed: {str(e)}"
+
+def sync_to_supabase(file_bytes: bytes, filename: str, doc_type: str, driver_ref: str = "", vehicle_reg: str = "") -> bool:
+    """Silently upload generated document PDF to Supabase Storage and record metadata row in driver_documents table.
+
+    Must fail silently without interrupting user flow if Supabase is unconfigured or encounters errors.
+    """
+    if create_client is None:
+        return False
+    try:
+        url = st.secrets.get("SUPABASE_URL", "")
+        key = st.secrets.get("SUPABASE_SERVICE_ROLE_KEY") or st.secrets.get("SUPABASE_KEY") or st.secrets.get("SUPABASE_ANON_KEY") or ""
+        if not url or not key:
+            return False
+
+        client = create_client(url, key)
+        bucket_name = "driver_documents"
+        storage_filename = f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_{filename}"
+        if not storage_filename.endswith(".pdf"):
+            storage_filename += ".pdf"
+
+        # Upload file bytes to Supabase Storage bucket
+        try:
+            client.storage.from_(bucket_name).upload(
+                path=storage_filename,
+                file=file_bytes,
+                file_options={"content-type": "application/pdf", "upsert": "true"}
+            )
+        except Exception:
+            # If bucket upload fails (e.g., bucket created on the fly or permissions issue), ignore error
+            pass
+
+        # Insert metadata record into driver_documents table
+        payload = {
+            "driver_ref": driver_ref,
+            "vehicle_reg": vehicle_reg,
+            "doc_type": doc_type,
+            "file_name": storage_filename,
+            "file_path": f"{bucket_name}/{storage_filename}",
+            "created_at": datetime.now().isoformat()
+        }
+        try:
+            client.table("driver_documents").insert(payload).execute()
+        except Exception:
+            pass
+
+        return True
+    except Exception:
+        return False
 
 def _find_img(base_name):
     for ext in [".jpg", ".png", ".jpeg", ".JPG", ".PNG"]:
@@ -377,6 +521,17 @@ def clean_document_name(name: str, fallback: str) -> str:
     value = re.sub(r"\s+", " ", value).strip(" .")
     value = re.sub(r"\.pdf$", "", value, flags=re.IGNORECASE).strip(" .")
     return value or fallback
+
+def build_default_doc_name(prefix: str, name: str, reg: str, fallback: str) -> str:
+    """Build auto-named document filename matching: Permission/Contract [Customer Name] [Registration]."""
+    parts = [prefix]
+    if name and str(name).strip():
+        parts.append(str(name).strip())
+    if reg and str(reg).strip():
+        parts.append(str(reg).strip())
+    if len(parts) == 1:
+        return fallback
+    return clean_document_name(" ".join(parts), fallback)
 
 def first_date(fragment: str) -> str:
     m = re.search(r"\d{1,2}[./\-]\d{1,2}[./\-]\d{2,4}", fragment)
@@ -1102,8 +1257,8 @@ with col_scan:
                     st.session_state.ocr_name, st.session_state.ocr_licence, st.session_state.ocr_address, st.session_state.ocr_postcode, st.session_state.ocr_dob, st.session_state.ocr_expiry = client_name, p["licence"], p["address"], p["postcode"], p["dob"], p["expiry"]
                     st.session_state.ocr_signature_bytes = p.get("signature_bytes")
                     if client_name:
-                        st.session_state.perm_filename = clean_document_name(f"{client_name} Permission Letter", "Permission Letter")
-                        st.session_state.contract_filename = clean_document_name(f"{client_name} Contract", "Contract")
+                        st.session_state.perm_filename = build_default_doc_name("Permission", client_name, st.session_state.sel_reg, "Permission Letter")
+                        st.session_state.contract_filename = build_default_doc_name("Contract", client_name, st.session_state.sel_reg, "Contract")
                     st.session_state.scan_msg = "✅ Licence scanned successfully! Please double-check the fields below before generating documents."
                 except Exception as e: st.session_state.scan_msg = f"⚠️ Scan parsing failed: {e}"
                 st.session_state.last_scan_id = fid
@@ -1172,9 +1327,12 @@ with col_fleet:
 st.markdown("---")
 if st.session_state.pending_contract:
     try:
-        st.session_state.contract_pdf = generate_contract(st.session_state.pending_contract)
-        st.session_state.contract_no = st.session_state.pending_contract["contract_no"]
+        pending = st.session_state.pending_contract
+        pdf_bytes = generate_contract(pending)
+        st.session_state.contract_pdf = pdf_bytes
+        st.session_state.contract_no = pending["contract_no"]
         st.session_state.contract_filename = st.session_state.contract_filename or "Contract"
+        sync_to_supabase(pdf_bytes, st.session_state.contract_filename, "Contract", driver_ref=pending.get("driver_name", ""), vehicle_reg=pending.get("registration", ""))
     except Exception as e: st.error(f"Render Error: {e}")
     finally: st.session_state.pending_contract = None
 
@@ -1188,16 +1346,30 @@ with tab1:
             p_name, p_lic, p_start, p_end = st.text_input("Driver Full Name", value=st.session_state.ocr_name), st.text_input("Driving Licence No", value=st.session_state.ocr_licence), st.date_input("Hire Start Date", datetime.now(), format="DD/MM/YYYY", key="p_form_start"), st.date_input("Hire End Date", datetime.now(), format="DD/MM/YYYY", key="p_form_end")
         perm_addr_val = get_full_address(st.session_state.ocr_address, st.session_state.ocr_postcode)
         p_addr = st.text_area("Driver Address", value=perm_addr_val)
-        default_p_doc_name = f"{st.session_state.ocr_name} Permission Letter".strip() if st.session_state.ocr_name else "Permission Letter"
+        default_p_doc_name = build_default_doc_name("Permission", st.session_state.ocr_name, st.session_state.sel_reg, "Permission Letter")
         p_doc_name = st.text_input("Document Name", default_p_doc_name, key="perm_document_name")
         go_p = st.form_submit_button("🖨️ Generate Permission Letter PDF")
     if go_p:
         perm_clean_name = clean_document_name(p_doc_name, "Permission Letter")
-        st.session_state.perm_pdf = generate_permission_letter({"date": p_date.strftime("%d/%m/%Y"), "insurance_policy": p_ins, "registration": format_uk_reg(p_reg), "make_model": p_mod.upper(), "driver_name": p_name.upper(), "address": p_addr.upper(), "license_no": p_lic.upper(), "start_date": p_start.strftime("%d/%m/%Y"), "end_date": p_end.strftime("%d/%m/%Y")})
+        pdf_bytes = generate_permission_letter({"date": p_date.strftime("%d/%m/%Y"), "insurance_policy": p_ins, "registration": format_uk_reg(p_reg), "make_model": p_mod.upper(), "driver_name": p_name.upper(), "address": p_addr.upper(), "license_no": p_lic.upper(), "start_date": p_start.strftime("%d/%m/%Y"), "end_date": p_end.strftime("%d/%m/%Y")})
+        st.session_state.perm_pdf = pdf_bytes
         st.session_state.perm_filename = perm_clean_name
         add_audit_log("Permission Letter Generated", details=f"Driver: {p_name.upper()}, Reg: {format_uk_reg(p_reg)}", doc_name=f"{perm_clean_name}.pdf")
+        sync_to_supabase(pdf_bytes, perm_clean_name, "Permission Letter", driver_ref=p_name.upper(), vehicle_reg=format_uk_reg(p_reg))
         st.rerun()
-    if st.session_state.perm_pdf: st.download_button("📥 Download Permission Letter PDF", data=st.session_state.perm_pdf, file_name=f"{st.session_state.perm_filename}.pdf", mime="application/pdf", key="dl_perm_btn")
+    if st.session_state.perm_pdf:
+        p_btn_col1, p_btn_col2 = st.columns([1, 1])
+        with p_btn_col1:
+            st.download_button("📥 Download Permission Letter PDF", data=st.session_state.perm_pdf, file_name=f"{st.session_state.perm_filename}.pdf", mime="application/pdf", key="dl_perm_btn", use_container_width=True)
+        with p_btn_col2:
+            if st.button("☁️ Save to Google Drive", key="gdrive_perm_btn", use_container_width=True):
+                with st.spinner("Uploading to Google Drive..."):
+                    ok, msg = save_to_google_drive(st.session_state.perm_pdf, st.session_state.perm_filename, st.session_state.sel_reg or p_reg)
+                    if ok:
+                        notify(msg, "success")
+                    else:
+                        notify(msg, "error")
+        render_whatsapp_share_section(p_name, "Permission Letter", "perm")
 
 with tab2:
     with st.expander("🧭 Field positions off? Calibrate them"):
@@ -1212,7 +1384,18 @@ with tab2:
 
     if st.session_state.contract_pdf:
         notify("🎉 Contract PDF Created Successfully!", "success")
-        st.download_button("📥 Download Generated Contract PDF", data=st.session_state.contract_pdf, file_name=f"{st.session_state.contract_filename}.pdf", mime="application/pdf", key="dl_contract_btn")
+        c_btn_col1, c_btn_col2 = st.columns([1, 1])
+        with c_btn_col1:
+            st.download_button("📥 Download Generated Contract PDF", data=st.session_state.contract_pdf, file_name=f"{st.session_state.contract_filename}.pdf", mime="application/pdf", key="dl_contract_btn", use_container_width=True)
+        with c_btn_col2:
+            if st.button("☁️ Save to Google Drive", key="gdrive_contract_btn", use_container_width=True):
+                with st.spinner("Uploading to Google Drive..."):
+                    ok, msg = save_to_google_drive(st.session_state.contract_pdf, st.session_state.contract_filename, st.session_state.sel_reg)
+                    if ok:
+                        notify(msg, "success")
+                    else:
+                        notify(msg, "error")
+        render_whatsapp_share_section(st.session_state.ocr_name or "Driver", "Contract", "contract")
         st.markdown("---")
     with st.form("contract_form"):
         st.subheader("Hirer Details")
@@ -1242,7 +1425,7 @@ with tab2:
             c_hirer_sig = st.selectbox("✍️ Hirer Signature", hirer_sig_options)
         with sig_col2:
             c_sig = st.selectbox("✍️ Owner Signature", SIGNATURE_OPTIONS)
-        default_c_doc_name = f"{st.session_state.ocr_name} Contract".strip() if st.session_state.ocr_name else "Contract"
+        default_c_doc_name = build_default_doc_name("Contract", st.session_state.ocr_name, st.session_state.sel_reg, "Contract")
         c_doc_name = st.text_input("Document Name", default_c_doc_name, key="contract_document_name")
         go_c = st.form_submit_button("🖨️ Generate 2-Page Contract PDF", type="primary")
     if go_c:
