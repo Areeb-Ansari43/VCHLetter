@@ -60,13 +60,14 @@ def get_audit_logs():
     except Exception:
         return []
 
-def add_audit_log(event_type: str, details: str = "", doc_name: str = ""):
+def add_audit_log(event_type: str, details: str = "", doc_name: str = "", file_path: str = ""):
     logs = get_audit_logs()
     entry = {
         "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "event_type": event_type,
         "doc_name": doc_name,
         "details": details,
+        "file_path": file_path,
     }
     logs.insert(0, entry)
     try:
@@ -74,18 +75,6 @@ def add_audit_log(event_type: str, details: str = "", doc_name: str = ""):
             json.dump(logs, f, indent=2)
     except Exception as e:
         pass
-
-def render_whatsapp_share_section(customer_name: str, doc_type: str, key_prefix: str):
-    """Render WhatsApp share section with pre-filled wa.me link without recipient pre-selected."""
-    name_str = customer_name.strip() if customer_name and customer_name.strip() else "Driver"
-    message_text = f"Hey {name_str}, here's your {doc_type.lower()}. You may download this and send it to your platform."
-    encoded_text = urllib.parse.quote(message_text)
-    wa_url = f"https://wa.me/?text={encoded_text}"
-
-    with st.expander("💬 Share via WhatsApp", expanded=True):
-        st.markdown(f"**Pre-filled Message:**\n> {message_text}")
-        st.markdown(f"[📲 Open WhatsApp Contact Picker]({wa_url})", unsafe_allow_html=True)
-        st.caption("⚠️ **Note:** WhatsApp's link protocol cannot attach files automatically. The message will open in WhatsApp — please attach the downloaded PDF before sending.")
 
 def save_to_google_drive(file_bytes: bytes, filename: str, vehicle_reg: str) -> tuple[bool, str]:
     """Upload generated PDF to Google Drive under folder matching car's registration.
@@ -157,18 +146,19 @@ def save_to_google_drive(file_bytes: bytes, filename: str, vehicle_reg: str) -> 
     except Exception as e:
         return False, f"Google Drive upload failed: {str(e)}"
 
-def sync_to_supabase(file_bytes: bytes, filename: str, doc_type: str, driver_ref: str = "", vehicle_reg: str = "") -> bool:
+def sync_to_supabase(file_bytes: bytes, filename: str, doc_type: str, driver_ref: str = "", vehicle_reg: str = "") -> str:
     """Silently upload generated document PDF to Supabase Storage and record metadata row in driver_documents table.
 
+    Returns the storage filename if successful, or empty string on failure.
     Must fail silently without interrupting user flow if Supabase is unconfigured or encounters errors.
     """
     if create_client is None:
-        return False
+        return ""
     try:
         url = st.secrets.get("SUPABASE_URL", "")
         key = st.secrets.get("SUPABASE_SERVICE_ROLE_KEY") or st.secrets.get("SUPABASE_KEY") or st.secrets.get("SUPABASE_ANON_KEY") or ""
         if not url or not key:
-            return False
+            return ""
 
         client = create_client(url, key)
         bucket_name = "driver_documents"
@@ -184,7 +174,6 @@ def sync_to_supabase(file_bytes: bytes, filename: str, doc_type: str, driver_ref
                 file_options={"content-type": "application/pdf", "upsert": "true"}
             )
         except Exception:
-            # If bucket upload fails (e.g., bucket created on the fly or permissions issue), ignore error
             pass
 
         # Insert metadata record into driver_documents table
@@ -201,9 +190,76 @@ def sync_to_supabase(file_bytes: bytes, filename: str, doc_type: str, driver_ref
         except Exception:
             pass
 
-        return True
+        return storage_filename
     except Exception:
-        return False
+        return ""
+
+def download_from_supabase_storage(doc_name: str, file_path: str = "") -> bytes | None:
+    """Download document PDF bytes from Supabase Storage bucket driver_documents."""
+    if create_client is None:
+        return None
+    try:
+        url = st.secrets.get("SUPABASE_URL", "")
+        key = st.secrets.get("SUPABASE_SERVICE_ROLE_KEY") or st.secrets.get("SUPABASE_KEY") or st.secrets.get("SUPABASE_ANON_KEY") or ""
+        if not url or not key:
+            return None
+
+        client = create_client(url, key)
+        bucket_name = "driver_documents"
+
+        paths_to_try = []
+        if file_path:
+            clean_p = file_path.replace(f"{bucket_name}/", "")
+            paths_to_try.append(clean_p)
+        if doc_name:
+            clean_doc = doc_name.strip()
+            paths_to_try.append(clean_doc)
+
+        for p in paths_to_try:
+            try:
+                res = client.storage.from_(bucket_name).download(p)
+                if res:
+                    return res
+            except Exception:
+                pass
+
+        if doc_name:
+            clean_doc = doc_name.strip()
+            base_doc = re.sub(r"\.pdf$", "", clean_doc, flags=re.IGNORECASE)
+            try:
+                records = client.table("driver_documents").select("*").ilike("file_name", f"%{base_doc}%").order("created_at", desc=True).limit(5).execute()
+                if records and records.data:
+                    for rec in records.data:
+                        fn = rec.get("file_name")
+                        if fn:
+                            try:
+                                res = client.storage.from_(bucket_name).download(fn)
+                                if res:
+                                    return res
+                            except Exception:
+                                pass
+            except Exception:
+                pass
+
+        try:
+            files = client.storage.from_(bucket_name).list()
+            if files and doc_name:
+                base_doc = re.sub(r"\.pdf$", "", doc_name.strip(), flags=re.IGNORECASE)
+                for f in files:
+                    fn = f.get("name", "")
+                    if base_doc.lower() in fn.lower():
+                        try:
+                            res = client.storage.from_(bucket_name).download(fn)
+                            if res:
+                                return res
+                        except Exception:
+                            pass
+        except Exception:
+            pass
+
+        return None
+    except Exception:
+        return None
 
 def _find_img(base_name):
     for ext in [".jpg", ".png", ".jpeg", ".JPG", ".PNG"]:
@@ -299,6 +355,7 @@ header {visibility: hidden;}
 [data-testid="stToolbar"] {visibility: hidden !important;}
 [data-testid="stStatusWidget"] {visibility: hidden !important;}
 [data-testid="stDecoration"] {visibility: hidden !important;}
+[data-testid="stSidebar"] {display: none !important;}
 .stApp { padding-bottom: 46px; }
 
 .fa-ibi-footer {
@@ -1179,57 +1236,135 @@ if not st.session_state.authenticated:
             notify("Invalid Security Verification Pin Code", "error")
     st.stop()
 
-with st.sidebar:
-    if st.button("🚪 Log out"):
+# ─────────────────────────────────────────────
+#  ROUTING AND TOP NAVIGATION
+# ─────────────────────────────────────────────
+query_page = st.query_params.get("page", "workspace")
+if "current_page" not in st.session_state:
+    st.session_state.current_page = "audit" if query_page == "audit" else "workspace"
+
+nav_col1, nav_col2, nav_col3 = st.columns([3, 3, 1])
+with nav_col1:
+    if st.session_state.current_page == "audit":
+        st.title("📋 System Audit Logs")
+    else:
+        st.title("FA-IBI Workspace")
+
+with nav_col2:
+    page_selection = st.radio(
+        "Navigation",
+        ["🏠 Workspace", "📋 Audit Logs"],
+        index=1 if st.session_state.current_page == "audit" else 0,
+        horizontal=True,
+        label_visibility="collapsed",
+        key="app_nav_radio"
+    )
+    new_page = "audit" if page_selection == "📋 Audit Logs" else "workspace"
+    if new_page != st.session_state.current_page:
+        st.session_state.current_page = new_page
+        st.query_params["page"] = new_page
+        st.rerun()
+
+with nav_col3:
+    if st.button("🚪 Log out", key="top_logout_btn"):
         st.session_state.authenticated = False
         if cookie_manager is not None:
             cookie_manager.delete(AUTH_COOKIE_NAME, key="delete_auth_cookie")
         st.rerun()
 
 # ─────────────────────────────────────────────
+#  AUDIT LOGS DEDICATED PAGE
+# ─────────────────────────────────────────────
+def render_audit_page():
+    st.caption("History of created documents & security verification attempts")
+
+    logs = get_audit_logs()
+    if not logs:
+        st.info("No audit log records found.")
+        return
+
+    search_query = st.text_input("🔍 Search audit logs...", placeholder="Search driver name, registration, event type, or document...", key="audit_page_search")
+    filtered_logs = logs
+    if search_query.strip():
+        q = search_query.strip().lower()
+        filtered_logs = [
+            l for l in logs
+            if q in l.get("timestamp", "").lower()
+            or q in l.get("event_type", "").lower()
+            or q in l.get("doc_name", "").lower()
+            or q in l.get("details", "").lower()
+        ]
+
+    st.markdown("---")
+    if not filtered_logs:
+        st.write("No matching log records found.")
+        return
+
+    # Table Header
+    hdr_col1, hdr_col2, hdr_col3, hdr_col4, hdr_col5 = st.columns([2, 2.5, 3, 3, 2])
+    with hdr_col1:
+        st.markdown("**Date & Time**")
+    with hdr_col2:
+        st.markdown("**Event Type**")
+    with hdr_col3:
+        st.markdown("**What was processed**")
+    with hdr_col4:
+        st.markdown("**Document Name**")
+    with hdr_col5:
+        st.markdown("**Action**")
+
+    st.markdown("<hr style='margin: 4px 0 12px 0;'>", unsafe_allow_html=True)
+
+    for idx, entry in enumerate(filtered_logs):
+        c1, c2, c3, c4, c5 = st.columns([2, 2.5, 3, 3, 2])
+        doc_name = entry.get("doc_name", "")
+        file_path = entry.get("file_path", "")
+
+        with c1:
+            st.caption(entry.get("timestamp", ""))
+        with c2:
+            st.write(entry.get("event_type", ""))
+        with c3:
+            st.write(entry.get("details", "") or "—")
+        with c4:
+            st.write(doc_name or "—")
+        with c5:
+            if doc_name:
+                btn_key = f"dl_audit_btn_{idx}_{abs(hash(entry.get('timestamp', '') + doc_name)) % 100000}"
+                cache_key = f"audit_pdf_cache_{btn_key}"
+
+                if cache_key in st.session_state and st.session_state[cache_key]:
+                    st.download_button(
+                        "📥 Download PDF",
+                        data=st.session_state[cache_key],
+                        file_name=doc_name if doc_name.endswith(".pdf") else f"{doc_name}.pdf",
+                        mime="application/pdf",
+                        key=f"dl_cached_{btn_key}",
+                        use_container_width=True
+                    )
+                else:
+                    if st.button("🔍 Get PDF", key=f"fetch_{btn_key}", use_container_width=True):
+                        with st.spinner("Fetching PDF from Supabase..."):
+                            pdf_bytes = download_from_supabase_storage(doc_name, file_path)
+                            if pdf_bytes:
+                                st.session_state[cache_key] = pdf_bytes
+                                notify("PDF retrieved successfully!", "success")
+                                st.rerun()
+                            else:
+                                notify("Could not retrieve PDF from Supabase Storage.", "warning")
+            else:
+                st.caption("No file")
+        st.markdown("<hr style='margin: 2px 0 8px 0; border-color: #333;'>", unsafe_allow_html=True)
+
+if st.session_state.current_page == "audit":
+    render_audit_page()
+    st.stop()
+
+# ─────────────────────────────────────────────
 #  SECURED MASTER WORKSPACE
 # ─────────────────────────────────────────────
 for k, v in dict(ocr_name="", ocr_licence="", ocr_address="", ocr_postcode="", ocr_dob="", ocr_expiry="", ocr_signature_bytes=None, last_scan_id="", sel_reg="", sel_make="", sel_model="", scan_msg="", fleet_msg="", perm_pdf=None, perm_filename="Permission Letter", contract_pdf=None, contract_filename="Contract", contract_no="", pending_contract=None).items():
     if k not in st.session_state: st.session_state[k] = v
-
-col_head1, col_head2 = st.columns([3, 1])
-with col_head1:
-    st.title("FA-IBI Workspace")
-with col_head2:
-    st.markdown("<div style='text-align: right; margin-top: 10px;'>", unsafe_allow_html=True)
-    with st.popover("📋 Audit Logs", use_container_width=True):
-        st.subheader("📋 System Audit Logs")
-        st.caption("History of created documents & PIN verification attempts")
-        logs = get_audit_logs()
-        if not logs:
-            st.info("No audit log records found.")
-        else:
-            search_query = st.text_input("🔍 Search logs...", key="audit_log_search")
-            filtered_logs = logs
-            if search_query.strip():
-                q = search_query.strip().lower()
-                filtered_logs = [
-                    l for l in logs
-                    if q in l.get("timestamp", "").lower()
-                    or q in l.get("event_type", "").lower()
-                    or q in l.get("doc_name", "").lower()
-                    or q in l.get("details", "").lower()
-                ]
-
-            import pandas as pd
-            df = pd.DataFrame(filtered_logs)
-            if not df.empty:
-                df = df.rename(columns={
-                    "timestamp": "Date & Time",
-                    "event_type": "Event Type",
-                    "doc_name": "Document Name",
-                    "details": "Details"
-                })
-                cols = [c for c in ["Date & Time", "Event Type", "Document Name", "Details"] if c in df.columns]
-                st.dataframe(df[cols], use_container_width=True, hide_index=True)
-            else:
-                st.write("No matching log records found.")
-    st.markdown("</div>", unsafe_allow_html=True)
 
 st.markdown("### 🎛️ Shared Data Automation Panel")
 if st.session_state.scan_msg:
@@ -1292,6 +1427,24 @@ with col_fleet:
             if term in v["reg"].upper() or term in v["model"].upper()
         ]
 
+    # Dynamic live autocomplete dropdown directly under search box when typing
+    if search_term.strip() and filtered_vehicles:
+        live_opts = ["-- Select Matching Vehicle --"] + [f"{v['reg']} ({v['model']})" for v in filtered_vehicles]
+        selected_match = st.selectbox(
+            f"⚡ Autocomplete Matches ({len(filtered_vehicles)} found)",
+            live_opts,
+            key="fleet_live_autocomplete"
+        )
+        if selected_match != "-- Select Matching Vehicle --":
+            rk = selected_match.split(" (")[0]
+            if st.session_state.sel_reg != rk:
+                car = next((v for v in FLEET_VEHICLES if v["reg"] == rk), None)
+                if car:
+                    st.session_state.sel_reg = car["reg"]
+                    st.session_state.sel_make, st.session_state.sel_model = split_make_model(car["model"])
+                    st.session_state.fleet_msg = f"✅ Fleet specs synchronized: {car['reg']} ({car['model']})"
+                    st.rerun()
+
     opts = ["-- Manual Entry --"] + [f"{v['reg']} ({v['model']})" for v in filtered_vehicles]
 
     # Handle current selection preservation when filtering
@@ -1319,7 +1472,7 @@ with col_fleet:
                 st.session_state.sel_make, st.session_state.sel_model = split_make_model(car["model"])
                 st.session_state.fleet_msg = f"✅ Fleet specs synchronized: {car['reg']} ({car['model']})"
                 st.rerun()
-    elif st.session_state.sel_reg:
+    elif st.session_state.sel_reg and not search_term.strip():
         st.session_state.sel_reg = st.session_state.sel_make = st.session_state.sel_model = ""
         st.session_state.fleet_msg = ""
         st.rerun()
@@ -1332,9 +1485,12 @@ if st.session_state.pending_contract:
         st.session_state.contract_pdf = pdf_bytes
         st.session_state.contract_no = pending["contract_no"]
         st.session_state.contract_filename = st.session_state.contract_filename or "Contract"
-        sync_to_supabase(pdf_bytes, st.session_state.contract_filename, "Contract", driver_ref=pending.get("driver_name", ""), vehicle_reg=pending.get("registration", ""))
+        sp_filename = sync_to_supabase(pdf_bytes, st.session_state.contract_filename, "Contract", driver_ref=pending.get("driver_name", ""), vehicle_reg=pending.get("registration", ""))
+        add_audit_log("Contract Generated", details=f"Contract No: {pending['contract_no']}, Driver: {pending.get('driver_name', '')}, Reg: {pending.get('registration', '')}", doc_name=f"{st.session_state.contract_filename}.pdf", file_path=f"driver_documents/{sp_filename}" if sp_filename else "")
     except Exception as e: st.error(f"Render Error: {e}")
     finally: st.session_state.pending_contract = None
+
+DEFAULT_HIRE_END_DATE = date(2026, 11, 27)
 
 tab1, tab2 = st.tabs(["📝 Permission Letter", "📜 Contract Generator"])
 with tab1:
@@ -1343,7 +1499,7 @@ with tab1:
         with c1:
             p_date, p_ins, p_reg, p_mod = st.date_input("Document Date", datetime.now(), format="DD/MM/YYYY", key="p_form_date"), st.text_input("Insurance Policy No", "HAVFL-000211"), st.text_input("Vehicle Registration", value=st.session_state.sel_reg), st.text_input("Make & Model", value=f"{st.session_state.sel_make} {st.session_state.sel_model}".strip())
         with c2:
-            p_name, p_lic, p_start, p_end = st.text_input("Driver Full Name", value=st.session_state.ocr_name), st.text_input("Driving Licence No", value=st.session_state.ocr_licence), st.date_input("Hire Start Date", datetime.now(), format="DD/MM/YYYY", key="p_form_start"), st.date_input("Hire End Date", datetime.now(), format="DD/MM/YYYY", key="p_form_end")
+            p_name, p_lic, p_start, p_end = st.text_input("Driver Full Name", value=st.session_state.ocr_name), st.text_input("Driving Licence No", value=st.session_state.ocr_licence), st.date_input("Hire Start Date", datetime.now(), format="DD/MM/YYYY", key="p_form_start"), st.date_input("Hire End Date", DEFAULT_HIRE_END_DATE, format="DD/MM/YYYY", key="p_form_end")
         perm_addr_val = get_full_address(st.session_state.ocr_address, st.session_state.ocr_postcode)
         p_addr = st.text_area("Driver Address", value=perm_addr_val)
         default_p_doc_name = build_default_doc_name("Permission", st.session_state.ocr_name, st.session_state.sel_reg, "Permission Letter")
@@ -1354,8 +1510,8 @@ with tab1:
         pdf_bytes = generate_permission_letter({"date": p_date.strftime("%d/%m/%Y"), "insurance_policy": p_ins, "registration": format_uk_reg(p_reg), "make_model": p_mod.upper(), "driver_name": p_name.upper(), "address": p_addr.upper(), "license_no": p_lic.upper(), "start_date": p_start.strftime("%d/%m/%Y"), "end_date": p_end.strftime("%d/%m/%Y")})
         st.session_state.perm_pdf = pdf_bytes
         st.session_state.perm_filename = perm_clean_name
-        add_audit_log("Permission Letter Generated", details=f"Driver: {p_name.upper()}, Reg: {format_uk_reg(p_reg)}", doc_name=f"{perm_clean_name}.pdf")
-        sync_to_supabase(pdf_bytes, perm_clean_name, "Permission Letter", driver_ref=p_name.upper(), vehicle_reg=format_uk_reg(p_reg))
+        sp_filename = sync_to_supabase(pdf_bytes, perm_clean_name, "Permission Letter", driver_ref=p_name.upper(), vehicle_reg=format_uk_reg(p_reg))
+        add_audit_log("Permission Letter Generated", details=f"Driver: {p_name.upper()}, Reg: {format_uk_reg(p_reg)}", doc_name=f"{perm_clean_name}.pdf", file_path=f"driver_documents/{sp_filename}" if sp_filename else "")
         st.rerun()
     if st.session_state.perm_pdf:
         p_btn_col1, p_btn_col2 = st.columns([1, 1])
@@ -1369,7 +1525,6 @@ with tab1:
                         notify(msg, "success")
                     else:
                         notify(msg, "error")
-        render_whatsapp_share_section(p_name, "Permission Letter", "perm")
 
 with tab2:
     with st.expander("🧭 Field positions off? Calibrate them"):
@@ -1395,7 +1550,6 @@ with tab2:
                         notify(msg, "success")
                     else:
                         notify(msg, "error")
-        render_whatsapp_share_section(st.session_state.ocr_name or "Driver", "Contract", "contract")
         st.markdown("---")
     with st.form("contract_form"):
         st.subheader("Hirer Details")
@@ -1410,7 +1564,7 @@ with tab2:
         with pp3: c_dep = st.text_input("Deposit (£)", "500/-")
         st.markdown("---"); pt1, pt2 = st.columns(2)
         with pt1: c_st = st.date_input("Hire Start", datetime.now(), format="DD/MM/YYYY", key="c_form_start")
-        with pt2: c_ret = st.date_input("Expected Return", datetime.now(), format="DD/MM/YYYY", key="c_form_return")
+        with pt2: c_ret = st.date_input("Expected Return", DEFAULT_HIRE_END_DATE, format="DD/MM/YYYY", key="c_form_return")
         tm1, tm2 = st.columns(2)
         with tm1: c_start_time = st.time_input("Time Car Given", datetime.now().time().replace(second=0, microsecond=0), key="c_form_start_time")
         with tm2: c_return_time = st.time_input("Time Car Returned", datetime.now().time().replace(second=0, microsecond=0), key="c_form_return_time")
@@ -1433,5 +1587,4 @@ with tab2:
         hirer_sig_bytes = st.session_state.ocr_signature_bytes if c_hirer_sig == "Scanned Licence Signature" else None
         st.session_state.pending_contract = {"contract_no": c_no.strip().upper() or "N/A", "date": c_date.strftime("%d/%m/%Y"), "driver_name": c_name.strip().upper(), "address": normalize_address(c_addr), "postcode": c_post.strip().upper(), "dob": c_dob.strip(), "license_no": c_lic.strip().upper(), "expiry_date": c_exp.strip(), "issuing_authority": c_auth.strip().upper(), "phone": c_ph.strip(), "email": c_em.strip().upper(), "rent": c_rent.strip(), "rate": c_rate.strip(), "deposit": c_dep.strip(), "start_date": c_st.strftime("%d/%m/%Y"), "expected_return": c_ret.strftime("%d/%m/%Y"), "start_time": c_start_time.strftime("%H:%M"), "return_time": c_return_time.strftime("%H:%M"), "registration": format_uk_reg(c_rv), "car_make": c_mk.strip().upper(), "car_model": c_mv.strip().upper(), "owner_signature": c_sig, "hirer_signature": hirer_sig_bytes}
         st.session_state.contract_filename = contract_clean_name
-        add_audit_log("Contract Generated", details=f"Contract No: {c_no.strip().upper() or 'N/A'}, Driver: {c_name.strip().upper()}, Reg: {format_uk_reg(c_rv)}", doc_name=f"{contract_clean_name}.pdf")
         st.rerun()
