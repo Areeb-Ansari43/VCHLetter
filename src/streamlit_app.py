@@ -3,6 +3,7 @@ import os, re, io
 import numpy as np
 from PIL import Image, ImageOps, ImageEnhance
 from datetime import datetime, date, timedelta
+from zoneinfo import ZoneInfo
 from reportlab.lib.pagesizes import letter
 from reportlab.pdfgen import canvas
 from reportlab.pdfbase.pdfmetrics import stringWidth
@@ -32,6 +33,11 @@ except ImportError:
     AnalyzeDocumentRequest = None
 
 try:
+    import pypdfium2
+except ImportError:
+    pypdfium2 = None
+
+try:
     from supabase import create_client
 except ImportError:
     create_client = None
@@ -51,6 +57,13 @@ from reportlab.lib.utils import simpleSplit
 SRC_DIR = os.path.dirname(os.path.abspath(__file__))
 AUDIT_LOG_FILE = os.path.join(SRC_DIR, "audit_logs.json")
 
+def get_uk_now() -> datetime:
+    """Return current datetime in UK local time (Europe/London), handling GMT/BST automatically."""
+    try:
+        return datetime.now(ZoneInfo("Europe/London"))
+    except Exception:
+        return datetime.now()
+
 def get_audit_logs():
     if not os.path.exists(AUDIT_LOG_FILE):
         return []
@@ -63,7 +76,7 @@ def get_audit_logs():
 def add_audit_log(event_type: str, details: str = "", doc_name: str = "", file_path: str = ""):
     logs = get_audit_logs()
     entry = {
-        "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "timestamp": get_uk_now().strftime("%Y-%m-%d %H:%M:%S"),
         "event_type": event_type,
         "doc_name": doc_name,
         "details": details,
@@ -543,6 +556,7 @@ FLEET_VEHICLES = [
     {"reg": "YF22 UVZ", "model": "MG 5 EV", "category": "Other Premium & EVs"},
     {"reg": "YF22 UWA", "model": "MG 5 EV", "category": "Other Premium & EVs"},
     {"reg": "YF22 UWK", "model": "MG 5 EV", "category": "Other Premium & EVs"},
+    {"reg": "YF22 UWM", "model": "MG 5 EV", "category": "Other Premium & EVs"},
     {"reg": "YF22 UWR", "model": "MG 5 EV", "category": "Other Premium & EVs"},
     {"reg": "YF22 UWT", "model": "MG 5 EV", "category": "Other Premium & EVs"},
     {"reg": "YF22 UXA", "model": "MG 5 EV", "category": "Other Premium & EVs"},
@@ -579,13 +593,52 @@ def clean_document_name(name: str, fallback: str) -> str:
     value = re.sub(r"\.pdf$", "", value, flags=re.IGNORECASE).strip(" .")
     return value or fallback
 
+def format_driver_name_for_display(name: str, reg: str = "") -> str:
+    if not name or not str(name).strip():
+        return ""
+    clean_n = str(name).strip()
+    clean_reg = re.sub(r"[^A-Za-z0-9]", "", str(reg or "")).upper()
+    if clean_reg and clean_reg != "REG":
+        clean_n = re.sub(re.escape(clean_reg), "", clean_n, flags=re.IGNORECASE).strip()
+
+    clean = clean_name(clean_n)
+    if not clean or clean.upper() == "DRIVER":
+        return ""
+    parts = clean.split("-")
+    return "-".join(" ".join(w.capitalize() for w in p.split()) for p in parts)
+
+def build_default_contract_no(name: str, reg: str) -> str:
+    """Build dynamic contract number matching format: 1608/[DRIVER-NAME]/[REG]2026."""
+    clean_n = str(name or "").strip()
+    clean_reg = re.sub(r"[^A-Za-z0-9]", "", str(reg or "")).upper()
+    if clean_reg and clean_reg != "REG":
+        clean_n = re.sub(re.escape(clean_reg), "", clean_n, flags=re.IGNORECASE).strip()
+
+    clean_n = clean_name(clean_n)
+    if clean_n and clean_n.upper() != "DRIVER":
+        name_part = re.sub(r"\s+", "-", clean_n).upper()
+    else:
+        name_part = "DRIVER"
+
+    if clean_reg and clean_reg != "REG":
+        reg_part = f"{clean_reg}2026"
+    else:
+        reg_part = "REG/2026"
+
+    return f"1608/{name_part}/{reg_part}"
+
 def build_default_doc_name(prefix: str, name: str, reg: str, fallback: str) -> str:
     """Build auto-named document filename matching: Permission/Contract [Customer Name] [Registration]."""
     parts = [prefix]
-    if name and str(name).strip():
-        parts.append(str(name).strip())
-    if reg and str(reg).strip():
-        parts.append(str(reg).strip())
+    fmt_name = format_driver_name_for_display(name, reg)
+    clean_reg = re.sub(r"[^A-Za-z0-9]", "", str(reg or "")).upper()
+
+    if fmt_name:
+        parts.append(fmt_name)
+
+    if clean_reg and clean_reg != "REG":
+        parts.append(clean_reg)
+
     if len(parts) == 1:
         return fallback
     return clean_document_name(" ".join(parts), fallback)
@@ -693,9 +746,47 @@ def _best_ocr_text(bw_img: Image.Image) -> str:
             best_text = ""
     return best_text
 
+def load_uploaded_image(uploaded_file) -> Image.Image:
+    """Load an uploaded image or extract Page 1 if a PDF is provided."""
+    if isinstance(uploaded_file, Image.Image):
+        return uploaded_file.copy()
+
+    if hasattr(uploaded_file, "seek"):
+        uploaded_file.seek(0)
+    data = uploaded_file.read() if hasattr(uploaded_file, "read") else uploaded_file
+    if hasattr(uploaded_file, "seek"):
+        uploaded_file.seek(0)
+
+    if not data:
+        raise ValueError("Uploaded file is empty.")
+
+    is_pdf = data.startswith(b"%PDF") or (hasattr(uploaded_file, "name") and str(getattr(uploaded_file, "name", "")).lower().endswith(".pdf"))
+
+    if is_pdf:
+        if pypdfium2 is None:
+            raise ValueError("Uploaded PDF could not be processed because pypdfium2 is not available.")
+        try:
+            pdf = pypdfium2.PdfDocument(data)
+            if len(pdf) == 0:
+                raise ValueError("Uploaded PDF contains no pages.")
+            # Process ONLY page 1 (index 0), ignore page 2+
+            page1 = pdf[0]
+            rendered = page1.render(scale=2).to_pil().convert("RGB")
+            return rendered
+        except ValueError:
+            raise
+        except Exception as e:
+            raise ValueError(f"Invalid or malformed PDF document: {e}")
+
+    try:
+        img = Image.open(io.BytesIO(data)).convert("RGB")
+        return ImageOps.exif_transpose(img)
+    except Exception as e:
+        raise ValueError(f"Unsupported or corrupted image file format: {e}")
+
+
 def run_ocr(uploaded_file) -> str:
-    img = Image.open(uploaded_file).convert("RGB")
-    img = ImageOps.exif_transpose(img)
+    img = load_uploaded_image(uploaded_file)
     img = _deskew_and_orient(img)
 
     w, h = img.size
@@ -852,9 +943,7 @@ def clean_signature_crop(cropped_pil: Image.Image) -> bytes:
     return buf.getvalue()
 
 def run_ocr_azure(uploaded_file) -> dict:
-    uploaded_file.seek(0)
-    orig_img = Image.open(uploaded_file).convert("RGB")
-    orig_img = ImageOps.exif_transpose(orig_img)
+    orig_img = load_uploaded_image(uploaded_file)
 
     azure_img = orig_img.copy()
     azure_img.thumbnail((2000, 2000))
@@ -894,9 +983,7 @@ def run_ocr_azure(uploaded_file) -> dict:
     }
 
 def extract_signature_crop_fallback(uploaded_file) -> bytes:
-    uploaded_file.seek(0)
-    orig_img = Image.open(uploaded_file).convert("RGB")
-    orig_img = ImageOps.exif_transpose(orig_img)
+    orig_img = load_uploaded_image(uploaded_file)
     orig_w, orig_h = orig_img.size
     crop_box = (
         int(0.18 * orig_w),
@@ -1374,7 +1461,7 @@ if st.session_state.fleet_msg:
 col_scan, col_fleet = st.columns(2)
 
 with col_scan:
-    uploaded = st.file_uploader("📷 Driver's Licence Scanner", type=["jpg","png","jpeg"], key="global_engine_scanner")
+    uploaded = st.file_uploader("📷 Driver's Licence Scanner", type=["jpg","png","jpeg","pdf"], key="global_engine_scanner")
     use_azure = azure_ocr_available()
     if uploaded and not use_azure:
         st.caption("ℹ️ Using the built-in Tesseract scanner. Add `AZURE_DOCINTEL_ENDPOINT` and `AZURE_DOCINTEL_KEY` to secrets for much more accurate scanning via Azure AI Document Intelligence.")
@@ -1391,9 +1478,9 @@ with col_scan:
                     client_name = f"{p['forename']} {p['surname']}".strip()
                     st.session_state.ocr_name, st.session_state.ocr_licence, st.session_state.ocr_address, st.session_state.ocr_postcode, st.session_state.ocr_dob, st.session_state.ocr_expiry = client_name, p["licence"], p["address"], p["postcode"], p["dob"], p["expiry"]
                     st.session_state.ocr_signature_bytes = p.get("signature_bytes")
-                    if client_name:
-                        st.session_state.perm_filename = build_default_doc_name("Permission", client_name, st.session_state.sel_reg, "Permission Letter")
-                        st.session_state.contract_filename = build_default_doc_name("Contract", client_name, st.session_state.sel_reg, "Contract")
+                    st.session_state.perm_filename = build_default_doc_name("Permission", client_name, st.session_state.sel_reg, "Permission Letter")
+                    st.session_state.contract_filename = build_default_doc_name("Contract", client_name, st.session_state.sel_reg, "Contract")
+                    st.session_state.contract_no = build_default_contract_no(client_name, st.session_state.sel_reg)
                     st.session_state.scan_msg = "✅ Licence scanned successfully! Please double-check the fields below before generating documents."
                 except Exception as e: st.session_state.scan_msg = f"⚠️ Scan parsing failed: {e}"
                 st.session_state.last_scan_id = fid
@@ -1470,6 +1557,9 @@ with col_fleet:
             if car:
                 st.session_state.sel_reg = car["reg"]
                 st.session_state.sel_make, st.session_state.sel_model = split_make_model(car["model"])
+                st.session_state.perm_filename = build_default_doc_name("Permission", st.session_state.ocr_name, car["reg"], "Permission Letter")
+                st.session_state.contract_filename = build_default_doc_name("Contract", st.session_state.ocr_name, car["reg"], "Contract")
+                st.session_state.contract_no = build_default_contract_no(st.session_state.ocr_name, car["reg"])
                 st.session_state.fleet_msg = f"✅ Fleet specs synchronized: {car['reg']} ({car['model']})"
                 st.rerun()
     elif st.session_state.sel_reg and not search_term.strip():
@@ -1497,16 +1587,19 @@ with tab1:
     with st.form("perm_form"):
         c1, c2 = st.columns(2)
         with c1:
-            p_date, p_ins, p_reg, p_mod = st.date_input("Document Date", datetime.now(), format="DD/MM/YYYY", key="p_form_date"), st.text_input("Insurance Policy No", "HAVFL-000211"), st.text_input("Vehicle Registration", value=st.session_state.sel_reg), st.text_input("Make & Model", value=f"{st.session_state.sel_make} {st.session_state.sel_model}".strip())
+            p_date, p_ins, p_reg, p_mod = st.date_input("Document Date", get_uk_now().date(), format="DD/MM/YYYY", key="p_form_date"), st.text_input("Insurance Policy No", "HAVFL-000211"), st.text_input("Vehicle Registration", value=st.session_state.sel_reg), st.text_input("Make & Model", value=f"{st.session_state.sel_make} {st.session_state.sel_model}".strip())
         with c2:
-            p_name, p_lic, p_start, p_end = st.text_input("Driver Full Name", value=st.session_state.ocr_name), st.text_input("Driving Licence No", value=st.session_state.ocr_licence), st.date_input("Hire Start Date", datetime.now(), format="DD/MM/YYYY", key="p_form_start"), st.date_input("Hire End Date", DEFAULT_HIRE_END_DATE, format="DD/MM/YYYY", key="p_form_end")
+            p_name, p_lic, p_start, p_end = st.text_input("Driver Full Name", value=st.session_state.ocr_name), st.text_input("Driving Licence No", value=st.session_state.ocr_licence), st.date_input("Hire Start Date", get_uk_now().date(), format="DD/MM/YYYY", key="p_form_start"), st.date_input("Hire End Date", DEFAULT_HIRE_END_DATE, format="DD/MM/YYYY", key="p_form_end")
         perm_addr_val = get_full_address(st.session_state.ocr_address, st.session_state.ocr_postcode)
         p_addr = st.text_area("Driver Address", value=perm_addr_val)
         default_p_doc_name = build_default_doc_name("Permission", st.session_state.ocr_name, st.session_state.sel_reg, "Permission Letter")
         p_doc_name = st.text_input("Document Name", default_p_doc_name, key="perm_document_name")
         go_p = st.form_submit_button("🖨️ Generate Permission Letter PDF")
     if go_p:
-        perm_clean_name = clean_document_name(p_doc_name, "Permission Letter")
+        expected_auto_perm_name = build_default_doc_name("Permission", p_name, p_reg, "Permission Letter")
+        perm_clean_name = clean_document_name(p_doc_name, expected_auto_perm_name)
+        if perm_clean_name in ("Permission Letter", "Permission", "Permission Driver") and p_name and clean_name(p_name).upper() != "DRIVER":
+            perm_clean_name = expected_auto_perm_name
         pdf_bytes = generate_permission_letter({"date": p_date.strftime("%d/%m/%Y"), "insurance_policy": p_ins, "registration": format_uk_reg(p_reg), "make_model": p_mod.upper(), "driver_name": p_name.upper(), "address": p_addr.upper(), "license_no": p_lic.upper(), "start_date": p_start.strftime("%d/%m/%Y"), "end_date": p_end.strftime("%d/%m/%Y")})
         st.session_state.perm_pdf = pdf_bytes
         st.session_state.perm_filename = perm_clean_name
@@ -1554,20 +1647,21 @@ with tab2:
     with st.form("contract_form"):
         st.subheader("Hirer Details")
         cc1, cc2 = st.columns(2)
+        default_c_no = build_default_contract_no(st.session_state.ocr_name, st.session_state.sel_reg)
         with cc1:
-            c_no, c_name, c_addr, c_post, c_dob = st.text_input("Contract Number", "1608/DRIVER/REG/2026"), st.text_input("Full Name", value=st.session_state.ocr_name), st.text_area("Address", value=st.session_state.ocr_address), st.text_input("Postcode", value=st.session_state.ocr_postcode), st.text_input("Date of Birth (DD/MM/YYYY)", value=normalize_date(st.session_state.ocr_dob))
+            c_no, c_name, c_addr, c_post, c_dob = st.text_input("Contract Number", value=default_c_no), st.text_input("Full Name", value=st.session_state.ocr_name), st.text_area("Address", value=st.session_state.ocr_address), st.text_input("Postcode", value=st.session_state.ocr_postcode), st.text_input("Date of Birth (DD/MM/YYYY)", value=normalize_date(st.session_state.ocr_dob))
         with cc2:
-            c_date, c_lic, c_exp, c_auth, c_ph, c_em = st.date_input("Contract Date", datetime.now(), format="DD/MM/YYYY", key="c_form_date"), st.text_input("Licence No", value=st.session_state.ocr_licence), st.text_input("Date of Expiry (DD/MM/YYYY)", value=normalize_date(st.session_state.ocr_expiry)), st.text_input("Issuing Authority", "DVLA"), st.text_input("Phone"), st.text_input("Email")
+            c_date, c_lic, c_exp, c_auth, c_ph, c_em = st.date_input("Contract Date", get_uk_now().date(), format="DD/MM/YYYY", key="c_form_date"), st.text_input("Licence No", value=st.session_state.ocr_licence), st.text_input("Date of Expiry (DD/MM/YYYY)", value=normalize_date(st.session_state.ocr_expiry)), st.text_input("Issuing Authority", "DVLA"), st.text_input("Phone"), st.text_input("Email")
         st.markdown("---"); pp1, pp2, pp3 = st.columns(3)
         with pp1: c_rent = st.text_input("Rent (£/week)", "250/-")
         with pp2: c_rate = st.text_input("Excess (pence/mile)", "20/-")
         with pp3: c_dep = st.text_input("Deposit (£)", "500/-")
         st.markdown("---"); pt1, pt2 = st.columns(2)
-        with pt1: c_st = st.date_input("Hire Start", datetime.now(), format="DD/MM/YYYY", key="c_form_start")
+        with pt1: c_st = st.date_input("Hire Start", get_uk_now().date(), format="DD/MM/YYYY", key="c_form_start")
         with pt2: c_ret = st.date_input("Expected Return", DEFAULT_HIRE_END_DATE, format="DD/MM/YYYY", key="c_form_return")
         tm1, tm2 = st.columns(2)
-        with tm1: c_start_time = st.time_input("Time Car Given", datetime.now().time().replace(second=0, microsecond=0), key="c_form_start_time")
-        with tm2: c_return_time = st.time_input("Time Car Returned", datetime.now().time().replace(second=0, microsecond=0), key="c_form_return_time")
+        with tm1: c_start_time = st.time_input("Time Car Given", get_uk_now().time().replace(second=0, microsecond=0), key="c_form_start_time")
+        with tm2: c_return_time = st.time_input("Time Car Returned", get_uk_now().time().replace(second=0, microsecond=0), key="c_form_return_time")
         st.markdown("---"); pv1, pv2, pv3 = st.columns(3)
         with pv1: c_mk = st.text_input("Make", value=st.session_state.sel_make)
         with pv2: c_rv = st.text_input("Reg", value=st.session_state.sel_reg)
@@ -1583,7 +1677,10 @@ with tab2:
         c_doc_name = st.text_input("Document Name", default_c_doc_name, key="contract_document_name")
         go_c = st.form_submit_button("🖨️ Generate 2-Page Contract PDF", type="primary")
     if go_c:
-        contract_clean_name = clean_document_name(c_doc_name, "Contract")
+        expected_auto_contract_name = build_default_doc_name("Contract", c_name, c_rv, "Contract")
+        contract_clean_name = clean_document_name(c_doc_name, expected_auto_contract_name)
+        if contract_clean_name in ("Contract", "Contract Driver", "Driver") and c_name and clean_name(c_name).upper() != "DRIVER":
+            contract_clean_name = expected_auto_contract_name
         hirer_sig_bytes = st.session_state.ocr_signature_bytes if c_hirer_sig == "Scanned Licence Signature" else None
         st.session_state.pending_contract = {"contract_no": c_no.strip().upper() or "N/A", "date": c_date.strftime("%d/%m/%Y"), "driver_name": c_name.strip().upper(), "address": normalize_address(c_addr), "postcode": c_post.strip().upper(), "dob": c_dob.strip(), "license_no": c_lic.strip().upper(), "expiry_date": c_exp.strip(), "issuing_authority": c_auth.strip().upper(), "phone": c_ph.strip(), "email": c_em.strip().upper(), "rent": c_rent.strip(), "rate": c_rate.strip(), "deposit": c_dep.strip(), "start_date": c_st.strftime("%d/%m/%Y"), "expected_return": c_ret.strftime("%d/%m/%Y"), "start_time": c_start_time.strftime("%H:%M"), "return_time": c_return_time.strftime("%H:%M"), "registration": format_uk_reg(c_rv), "car_make": c_mk.strip().upper(), "car_model": c_mv.strip().upper(), "owner_signature": c_sig, "hirer_signature": hirer_sig_bytes}
         st.session_state.contract_filename = contract_clean_name
