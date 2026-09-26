@@ -748,6 +748,9 @@ def _best_ocr_text(bw_img: Image.Image) -> str:
 
 def load_uploaded_image(uploaded_file) -> Image.Image:
     """Load an uploaded image or extract Page 1 if a PDF is provided."""
+    if isinstance(uploaded_file, Image.Image):
+        return uploaded_file.copy()
+
     if hasattr(uploaded_file, "seek"):
         uploaded_file.seek(0)
     data = uploaded_file.read() if hasattr(uploaded_file, "read") else uploaded_file
