@@ -26,11 +26,9 @@ except ImportError:
 try:
     from azure.core.credentials import AzureKeyCredential
     from azure.ai.documentintelligence import DocumentIntelligenceClient
-    from azure.ai.documentintelligence.models import AnalyzeDocumentRequest
 except ImportError:
     AzureKeyCredential = None
     DocumentIntelligenceClient = None
-    AnalyzeDocumentRequest = None
 
 try:
     import pypdfium2
