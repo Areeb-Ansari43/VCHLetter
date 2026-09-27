@@ -138,8 +138,8 @@ def test_page_2_never_passed_to_azure():
 
         res = run_ocr_azure(pdf_file)
 
-        # Verify begin_analyze_document was called with raw JPEG binary body, not whole PDF or base64 JSON
-        assert mock_client.begin_analyze_document.called
+        # Explicitly assert exactly one begin_analyze_document call
+        assert mock_client.begin_analyze_document.call_count == 1
         call_kwargs = mock_client.begin_analyze_document.call_args.kwargs
         assert call_kwargs.get("content_type") == "image/jpeg"
         sent_body = call_kwargs.get("body")
@@ -174,6 +174,7 @@ def test_oversized_upload_downscaled():
          patch("streamlit_app.st.secrets", {"AZURE_DOCINTEL_ENDPOINT": "https://test.cognitiveservices.azure.com/", "AZURE_DOCINTEL_KEY": "testkey"}):
         buf.seek(0)
         run_ocr_azure(buf)
+        assert mock_client.begin_analyze_document.call_count == 1
         sent_bytes = mock_client.begin_analyze_document.call_args.kwargs["body"]
         # Ensure payload is well under 1MB
         assert len(sent_bytes) < 1_000_000
