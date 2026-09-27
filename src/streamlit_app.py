@@ -175,7 +175,7 @@ def sync_to_supabase(file_bytes: bytes, filename: str, doc_type: str, driver_ref
 
         client = create_client(url, key)
         bucket_name = "driver_documents"
-        storage_filename = f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_{filename}"
+        storage_filename = f"{get_uk_now().strftime('%Y%m%d_%H%M%S')}_{filename}"
         if not storage_filename.endswith(".pdf"):
             storage_filename += ".pdf"
 
@@ -196,7 +196,7 @@ def sync_to_supabase(file_bytes: bytes, filename: str, doc_type: str, driver_ref
             "doc_type": doc_type,
             "file_name": storage_filename,
             "file_path": f"{bucket_name}/{storage_filename}",
-            "created_at": datetime.now().isoformat()
+            "created_at": get_uk_now().isoformat()
         }
         try:
             client.table("driver_documents").insert(payload).execute()
@@ -591,7 +591,20 @@ def clean_document_name(name: str, fallback: str) -> str:
     value = re.sub(r'[\x00-\x1f<>:"/\\|?*]', "", str(name or ""))
     value = re.sub(r"\s+", " ", value).strip(" .")
     value = re.sub(r"\.pdf$", "", value, flags=re.IGNORECASE).strip(" .")
-    return value or fallback
+    if not value:
+        return fallback
+
+    words = value.split(" ")
+    if len(words) >= 4 and len(words) % 2 == 0 and words[:len(words)//2] == words[len(words)//2:]:
+        value = " ".join(words[:len(words)//2])
+        words = value.split(" ")
+
+    if len(words) >= 5:
+        rest = words[1:]
+        if len(rest) % 2 == 0 and rest[:len(rest)//2] == rest[len(rest)//2:]:
+            value = " ".join([words[0]] + rest[:len(rest)//2])
+
+    return value
 
 def format_driver_name_for_display(name: str, reg: str = "") -> str:
     if not name or not str(name).strip():
@@ -946,20 +959,25 @@ def run_ocr_azure(uploaded_file) -> dict:
     orig_img = load_uploaded_image(uploaded_file)
 
     azure_img = orig_img.copy()
-    azure_img.thumbnail((2000, 2000))
+    azure_img.thumbnail((1600, 1600))
     buf = io.BytesIO()
-    azure_img.save(buf, format="JPEG", quality=92)
+    azure_img.save(buf, format="JPEG", quality=85)
     img_bytes = buf.getvalue()
+    buf.close()
 
-    client = DocumentIntelligenceClient(
-        endpoint=st.secrets["AZURE_DOCINTEL_ENDPOINT"],
-        credential=AzureKeyCredential(st.secrets["AZURE_DOCINTEL_KEY"]),
-    )
-    poller = client.begin_analyze_document(
-        "prebuilt-idDocument",
-        AnalyzeDocumentRequest(bytes_source=img_bytes),
-    )
-    result = poller.result(timeout=30)
+    try:
+        client = DocumentIntelligenceClient(
+            endpoint=st.secrets["AZURE_DOCINTEL_ENDPOINT"],
+            credential=AzureKeyCredential(st.secrets["AZURE_DOCINTEL_KEY"]),
+        )
+        poller = client.begin_analyze_document(
+            "prebuilt-idDocument",
+            body=img_bytes,
+            content_type="image/jpeg",
+        )
+        result = poller.result(timeout=30)
+    except Exception as e:
+        raise ValueError(f"Azure Document Intelligence error: {e}")
 
     if not result.documents:
         raise ValueError("Azure couldn't detect an ID document in this photo.")
@@ -1475,14 +1493,21 @@ with col_scan:
                     else:
                         raw = run_ocr(uploaded); p = parse_licence(raw)
                         p["signature_bytes"] = extract_signature_crop_fallback(uploaded)
-                    client_name = f"{p['forename']} {p['surname']}".strip()
-                    st.session_state.ocr_name, st.session_state.ocr_licence, st.session_state.ocr_address, st.session_state.ocr_postcode, st.session_state.ocr_dob, st.session_state.ocr_expiry = client_name, p["licence"], p["address"], p["postcode"], p["dob"], p["expiry"]
+                    raw_name = f"{p.get('forename', '')} {p.get('surname', '')}".strip()
+                    client_name = format_driver_name_for_display(raw_name)
+                    st.session_state.ocr_name = client_name
+                    st.session_state.ocr_licence = p.get("licence", "")
+                    st.session_state.ocr_address = p.get("address", "")
+                    st.session_state.ocr_postcode = p.get("postcode", "")
+                    st.session_state.ocr_dob = p.get("dob", "")
+                    st.session_state.ocr_expiry = p.get("expiry", "")
                     st.session_state.ocr_signature_bytes = p.get("signature_bytes")
                     st.session_state.perm_filename = build_default_doc_name("Permission", client_name, st.session_state.sel_reg, "Permission Letter")
                     st.session_state.contract_filename = build_default_doc_name("Contract", client_name, st.session_state.sel_reg, "Contract")
                     st.session_state.contract_no = build_default_contract_no(client_name, st.session_state.sel_reg)
                     st.session_state.scan_msg = "✅ Licence scanned successfully! Please double-check the fields below before generating documents."
-                except Exception as e: st.session_state.scan_msg = f"⚠️ Scan parsing failed: {e}"
+                except Exception as e:
+                    st.session_state.scan_msg = f"⚠️ Licence scan failed: {str(e)}. Please enter details manually if needed."
                 st.session_state.last_scan_id = fid
             st.rerun()
     elif uploaded and not use_azure and not pytesseract:

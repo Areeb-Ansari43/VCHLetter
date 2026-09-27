@@ -1,8 +1,10 @@
 import io
 import pytest
 from datetime import date, datetime
+from zoneinfo import ZoneInfo
 import os
 import sys
+from unittest.mock import MagicMock, patch
 from PIL import Image
 from reportlab.pdfgen import canvas
 
@@ -16,6 +18,7 @@ from streamlit_app import (
     clean_document_name,
     load_uploaded_image,
     run_ocr,
+    run_ocr_azure,
     get_uk_now,
     DEFAULT_HIRE_END_DATE,
     generate_permission_letter,
@@ -24,6 +27,7 @@ from streamlit_app import (
     get_audit_logs,
     FLEET_VEHICLES,
     download_from_supabase_storage,
+    parse_licence,
 )
 
 def test_jpg_licence_loading():
@@ -76,8 +80,6 @@ def test_two_page_pdf():
     assert loaded.size[0] > 0 and loaded.size[1] > 0
 
 def test_two_page_pdf_only_page_1_processed():
-    import pypdfium2
-
     pdf_buf = io.BytesIO()
     c = canvas.Canvas(pdf_buf)
     c.drawString(100, 500, "FRONT LICENCE PAGE ONE")
@@ -99,6 +101,84 @@ def test_two_page_pdf_only_page_1_processed():
     assert isinstance(raw_text, str)
     assert "SECRET" not in raw_text
 
+def test_page_2_never_passed_to_azure():
+    pdf_buf = io.BytesIO()
+    c = canvas.Canvas(pdf_buf)
+    c.drawString(100, 500, "FRONT PAGE ONE LICENCE")
+    c.showPage()
+    c.drawString(100, 500, "BACK PAGE TWO SECRET UNREADABLE DATA")
+    c.showPage()
+    c.save()
+    pdf_file = io.BytesIO(pdf_buf.getvalue())
+    pdf_file.name = "multi_page_licence.pdf"
+
+    # Mock Azure client and st.secrets
+    mock_field_fn = MagicMock(value_string="SMITH")
+    mock_field_ln = MagicMock(value_string="JOHN")
+    mock_doc = MagicMock()
+    mock_doc.fields = {
+        "LastName": mock_field_fn,
+        "FirstName": mock_field_ln,
+        "Address": "123 TEST ST",
+        "DocumentNumber": "SMITH901019A999"
+    }
+
+    mock_result = MagicMock()
+    mock_result.documents = [mock_doc]
+    mock_result.pages = []
+
+    mock_poller = MagicMock()
+    mock_poller.result.return_value = mock_result
+
+    mock_client = MagicMock()
+    mock_client.begin_analyze_document.return_value = mock_poller
+
+    with patch("streamlit_app.DocumentIntelligenceClient", return_value=mock_client), \
+         patch("streamlit_app.st.secrets", {"AZURE_DOCINTEL_ENDPOINT": "https://test.cognitiveservices.azure.com/", "AZURE_DOCINTEL_KEY": "testkey"}):
+
+        res = run_ocr_azure(pdf_file)
+
+        # Explicitly assert exactly one begin_analyze_document call
+        assert mock_client.begin_analyze_document.call_count == 1
+        call_kwargs = mock_client.begin_analyze_document.call_args.kwargs
+        assert call_kwargs.get("content_type") == "image/jpeg"
+        sent_body = call_kwargs.get("body")
+        assert isinstance(sent_body, bytes)
+        # Ensure raw PDF bytes are not sent as body
+        assert not sent_body.startswith(b"%PDF")
+
+def test_oversized_upload_downscaled():
+    # Create large image (e.g. 4000x3000)
+    large_img = Image.new("RGB", (4000, 3000), color="white")
+    buf = io.BytesIO()
+    large_img.save(buf, format="JPEG")
+    buf.seek(0)
+    buf.name = "large_scan.jpg"
+
+    loaded = load_uploaded_image(buf)
+    assert isinstance(loaded, Image.Image)
+    assert loaded.size == (4000, 3000)
+
+    # When run_ocr_azure processes it, thumbnail downscales it to 1600x1600 max
+    mock_result = MagicMock()
+    mock_doc = MagicMock()
+    mock_doc.fields = {}
+    mock_result.documents = [mock_doc]
+    mock_result.pages = []
+    mock_poller = MagicMock()
+    mock_poller.result.return_value = mock_result
+    mock_client = MagicMock()
+    mock_client.begin_analyze_document.return_value = mock_poller
+
+    with patch("streamlit_app.DocumentIntelligenceClient", return_value=mock_client), \
+         patch("streamlit_app.st.secrets", {"AZURE_DOCINTEL_ENDPOINT": "https://test.cognitiveservices.azure.com/", "AZURE_DOCINTEL_KEY": "testkey"}):
+        buf.seek(0)
+        run_ocr_azure(buf)
+        assert mock_client.begin_analyze_document.call_count == 1
+        sent_bytes = mock_client.begin_analyze_document.call_args.kwargs["body"]
+        # Ensure payload is well under 1MB
+        assert len(sent_bytes) < 1_000_000
+
 def test_malformed_pdf():
     malformed = io.BytesIO(b"%PDF-1.4 malformed broken bytes content")
     malformed.name = "bad_licence.pdf"
@@ -113,6 +193,12 @@ def test_unsupported_file():
     with pytest.raises(ValueError, match="Unsupported or corrupted image"):
         load_uploaded_image(unsupported)
 
+def test_driver_name_extraction_formatting():
+    assert format_driver_name_for_display("JOHN SMITH") == "John Smith"
+    assert format_driver_name_for_display("MARY JANE SMITH") == "Mary Jane Smith"
+    assert format_driver_name_for_display("DRIVER") == ""
+    assert format_driver_name_for_display("") == ""
+
 def test_document_filename_formatting():
     doc_name = build_default_doc_name("Contract", "JOHN SMITH", "YF22UWM", "Contract")
     assert doc_name == "Contract John Smith YF22UWM"
@@ -123,6 +209,9 @@ def test_document_filename_formatting():
 def test_no_duplicate_name_or_registration_in_filename():
     dup_doc_name = build_default_doc_name("Contract", "John Smith YF22UWM", "YF22UWM", "Contract")
     assert dup_doc_name == "Contract John Smith YF22UWM"
+
+    dup_clean = clean_document_name("Contract John Smith YF22UWM John Smith YF22UWM", "Contract")
+    assert dup_clean == "Contract John Smith YF22UWM"
 
 def test_dynamic_contract_number():
     c_no1 = build_default_contract_no("JOHN SMITH", "YF22UWM")
@@ -139,6 +228,15 @@ def test_europe_london_timezone():
     assert isinstance(uk_time, datetime)
     assert uk_time.tzinfo is not None
     assert str(uk_time.tzinfo) == "Europe/London"
+
+def test_gmt_and_bst_timezone_offset():
+    # GMT in Winter (January) -> UTC+0
+    dt_gmt = datetime(2026, 1, 15, 12, 0, tzinfo=ZoneInfo("Europe/London"))
+    assert dt_gmt.utcoffset().total_seconds() == 0
+
+    # BST in Summer (July) -> UTC+1
+    dt_bst = datetime(2026, 7, 15, 12, 0, tzinfo=ZoneInfo("Europe/London"))
+    assert dt_bst.utcoffset().total_seconds() == 3600
 
 def test_mg5_yf22uwm_exists_exactly_once():
     matches = [v for v in FLEET_VEHICLES if v["reg"].replace(" ", "").upper() == "YF22UWM"]
