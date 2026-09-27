@@ -109,7 +109,8 @@ def test_page_2_never_passed_to_azure():
     c.drawString(100, 500, "BACK PAGE TWO SECRET UNREADABLE DATA")
     c.showPage()
     c.save()
-    pdf_file = io.BytesIO(pdf_buf.getvalue())
+    raw_pdf_bytes = pdf_buf.getvalue()
+    pdf_file = io.BytesIO(raw_pdf_bytes)
     pdf_file.name = "multi_page_licence.pdf"
 
     # Mock Azure client and st.secrets
@@ -134,9 +135,13 @@ def test_page_2_never_passed_to_azure():
     mock_client.begin_analyze_document.return_value = mock_poller
 
     with patch("streamlit_app.DocumentIntelligenceClient", return_value=mock_client), \
-         patch("streamlit_app.st.secrets", {"AZURE_DOCINTEL_ENDPOINT": "https://test.cognitiveservices.azure.com/", "AZURE_DOCINTEL_KEY": "testkey"}):
+         patch("streamlit_app.st.secrets", {"AZURE_DOCINTEL_ENDPOINT": "https://test.cognitiveservices.azure.com/", "AZURE_DOCINTEL_KEY": "testkey"}), \
+         patch("streamlit_app.load_uploaded_image", wraps=load_uploaded_image) as spy_load_img:
 
         res = run_ocr_azure(pdf_file)
+
+        # Verify entry point load_uploaded_image was invoked
+        assert spy_load_img.call_count == 1
 
         # Explicitly assert exactly one begin_analyze_document call
         assert mock_client.begin_analyze_document.call_count == 1
@@ -144,8 +149,10 @@ def test_page_2_never_passed_to_azure():
         assert call_kwargs.get("content_type") == "image/jpeg"
         sent_body = call_kwargs.get("body")
         assert isinstance(sent_body, bytes)
-        # Ensure raw PDF bytes are not sent as body
+        # Ensure raw PDF bytes and original PDF payload are NOT sent
         assert not sent_body.startswith(b"%PDF")
+        assert sent_body != raw_pdf_bytes
+        assert b"BACK PAGE TWO SECRET UNREADABLE DATA" not in sent_body
 
 def test_oversized_upload_downscaled():
     # Create large image (e.g. 4000x3000)
