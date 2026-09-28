@@ -1,8 +1,8 @@
 import streamlit as st
-import os, re, io
+import os, re, io, logging
 import numpy as np
 from PIL import Image, ImageOps, ImageEnhance
-from datetime import datetime, date, timedelta
+from datetime import datetime, date, time, timedelta
 from zoneinfo import ZoneInfo
 from reportlab.lib.pagesizes import letter
 from reportlab.pdfgen import canvas
@@ -36,6 +36,12 @@ except ImportError:
     pypdfium2 = None
 
 try:
+    import pillow_heif
+    pillow_heif.register_heif_opener()
+except ImportError:
+    pillow_heif = None
+
+try:
     from supabase import create_client
 except ImportError:
     create_client = None
@@ -54,6 +60,12 @@ from reportlab.lib.utils import simpleSplit
 
 SRC_DIR = os.path.dirname(os.path.abspath(__file__))
 AUDIT_LOG_FILE = os.path.join(SRC_DIR, "audit_logs.json")
+
+def get_secret(key: str, default: str = "") -> str:
+    try:
+        return st.secrets.get(key, default)
+    except Exception:
+        return default
 
 def get_uk_now() -> datetime:
     """Return current datetime in UK local time (Europe/London), handling GMT/BST automatically."""
@@ -97,7 +109,7 @@ def save_to_google_drive(file_bytes: bytes, filename: str, vehicle_reg: str) -> 
 
     try:
         # Load Google service account credentials from st.secrets
-        creds_data = st.secrets.get("gcp_service_account") or st.secrets.get("GOOGLE_DRIVE_CREDENTIALS") or st.secrets.get("GDRIVE_SERVICE_ACCOUNT")
+        creds_data = get_secret("gcp_service_account") or get_secret("GOOGLE_DRIVE_CREDENTIALS") or get_secret("GDRIVE_SERVICE_ACCOUNT")
         if not creds_data:
             return False, "Google Drive API credentials not found in secrets (`gcp_service_account`)."
 
@@ -112,7 +124,7 @@ def save_to_google_drive(file_bytes: bytes, filename: str, vehicle_reg: str) -> 
         creds = service_account.Credentials.from_service_account_info(creds_info, scopes=scopes)
 
         # Optional domain-wide delegation for virtualcarhire@gmail.com if configured
-        target_email = st.secrets.get("GDRIVE_IMPERSONATE_EMAIL", "virtualcarhire@gmail.com")
+        target_email = get_secret("GDRIVE_IMPERSONATE_EMAIL", "virtualcarhire@gmail.com")
         if creds_info.get("type") == "service_account" and target_email:
             try:
                 creds = creds.with_subject(target_email)
@@ -166,8 +178,8 @@ def sync_to_supabase(file_bytes: bytes, filename: str, doc_type: str, driver_ref
     if create_client is None:
         return ""
     try:
-        url = st.secrets.get("SUPABASE_URL", "")
-        key = st.secrets.get("SUPABASE_SERVICE_ROLE_KEY") or st.secrets.get("SUPABASE_KEY") or st.secrets.get("SUPABASE_ANON_KEY") or ""
+        url = get_secret("SUPABASE_URL", "")
+        key = get_secret("SUPABASE_SERVICE_ROLE_KEY") or get_secret("SUPABASE_KEY") or get_secret("SUPABASE_ANON_KEY")
         if not url or not key:
             return ""
 
@@ -273,9 +285,24 @@ def download_from_supabase_storage(doc_name: str, file_path: str = "") -> bytes 
         return None
 
 def _find_img(base_name):
-    for ext in [".jpg", ".png", ".jpeg", ".JPG", ".PNG"]:
-        p = os.path.join(SRC_DIR, base_name + ext)
-        if os.path.exists(p): return p
+    candidate_dirs = [
+        SRC_DIR,
+        os.path.join(SRC_DIR, "src"),
+        os.path.dirname(SRC_DIR),
+        os.getcwd(),
+        os.path.join(os.getcwd(), "src"),
+        os.path.dirname(os.path.abspath(__file__)),
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), "src"),
+    ]
+    seen = set()
+    for d in candidate_dirs:
+        if not d or d in seen:
+            continue
+        seen.add(d)
+        for ext in [".jpg", ".png", ".jpeg", ".JPG", ".PNG"]:
+            p = os.path.join(d, base_name + ext)
+            if os.path.exists(p):
+                return p
     return None
 
 # If you have a hosted URL for your logo, paste it here (e.g. from a GitHub
@@ -835,7 +862,7 @@ def azure_ocr_available() -> bool:
     if DocumentIntelligenceClient is None:
         return False
     try:
-        return bool(st.secrets.get("AZURE_DOCINTEL_ENDPOINT", "")) and bool(st.secrets.get("AZURE_DOCINTEL_KEY", ""))
+        return bool(get_secret("AZURE_DOCINTEL_ENDPOINT")) and bool(get_secret("AZURE_DOCINTEL_KEY"))
     except Exception:
         return False
 
@@ -966,8 +993,8 @@ def run_ocr_azure(uploaded_file) -> dict:
 
     try:
         client = DocumentIntelligenceClient(
-            endpoint=st.secrets["AZURE_DOCINTEL_ENDPOINT"],
-            credential=AzureKeyCredential(st.secrets["AZURE_DOCINTEL_KEY"]),
+            endpoint=get_secret("AZURE_DOCINTEL_ENDPOINT"),
+            credential=AzureKeyCredential(get_secret("AZURE_DOCINTEL_KEY")),
         )
         poller = client.begin_analyze_document(
             "prebuilt-idDocument",
@@ -1318,9 +1345,29 @@ def generate_calibration_grid() -> bytes:
             cv.drawString(2, y + 1, str(y))
     cv.save(); buf.seek(0); return buf.getvalue()
 
+def format_date_val(val, fallback_default=None) -> str:
+    if val is None:
+        if fallback_default is not None:
+            return fallback_default.strftime("%d/%m/%Y") if isinstance(fallback_default, (date, datetime)) else str(fallback_default)
+        return ""
+    if isinstance(val, (date, datetime)):
+        return val.strftime("%d/%m/%Y")
+    return str(val)
+
+def format_time_val(val) -> str:
+    if val is None:
+        return get_uk_now().strftime("%H:%M")
+    if isinstance(val, (time, datetime)):
+        return val.strftime("%H:%M")
+    return str(val)
+
 def render_pdf_to_images(pdf_bytes: bytes) -> list[Image.Image]:
     """Convert PDF bytes into PIL Images (one per page) for live full-page A4 document preview."""
     if pypdfium2 is None or not pdf_bytes:
+        if pypdfium2 is None:
+            logging.error("pypdfium2 module is not available.")
+        if not pdf_bytes:
+            logging.warning("render_pdf_to_images received empty pdf_bytes.")
         return []
     try:
         pdf = pypdfium2.PdfDocument(pdf_bytes)
@@ -1328,7 +1375,8 @@ def render_pdf_to_images(pdf_bytes: bytes) -> list[Image.Image]:
         for page in pdf:
             imgs.append(page.render(scale=2).to_pil().convert("RGB"))
         return imgs
-    except Exception:
+    except Exception as e:
+        logging.exception("Failed to render PDF bytes to images with pypdfium2: %s", e)
         return []
 
 # ─────────────────────────────────────────────
@@ -1338,7 +1386,7 @@ if not st.session_state.authenticated:
     st.subheader("System Security Verification")
     code = st.text_input("Access PIN", type="password", placeholder="Enter key…")
     if st.button("Verify Key", icon=":material/lock_open:"):
-        if code == st.secrets.get("ACCESS_KEY", ""):
+        if code == get_secret("ACCESS_KEY", ""):
             st.session_state.authenticated = True
             add_audit_log("Verification PIN Entered", details="Successful Verification PIN Entry")
             if cookie_manager is not None:
@@ -1566,7 +1614,7 @@ if st.session_state.fleet_msg:
 col_scan, col_fleet = st.columns(2)
 
 with col_scan:
-    uploaded = st.file_uploader("📷 Driver's Licence Scanner", type=["jpg", "jpeg", "png", "pdf", "webp", "bmp", "tiff", "tif"], key="global_engine_scanner")
+    uploaded = st.file_uploader("📷 Driver's Licence Scanner", type=["jpg", "jpeg", "png", "pdf", "webp", "bmp", "tiff", "tif", "heic", "heif"], key="global_engine_scanner")
     use_azure = azure_ocr_available()
     if uploaded and not use_azure:
         st.caption("ℹ️ Using the built-in Tesseract scanner. Add `AZURE_DOCINTEL_ENDPOINT` and `AZURE_DOCINTEL_KEY` to secrets for much more accurate scanning via Azure AI Document Intelligence.")
@@ -1766,15 +1814,15 @@ with tab1:
     with col_preview:
         st.subheader("Live Document Preview")
         preview_perm_data = {
-            "date": p_date.strftime("%d/%m/%Y") if p_date else get_uk_now().strftime("%d/%m/%Y"),
+            "date": format_date_val(p_date, get_uk_now().date()),
             "insurance_policy": p_ins or "",
             "registration": format_uk_reg(p_reg or ""),
             "make_model": (p_mod or "").upper(),
             "driver_name": (p_name or "").upper(),
             "address": (p_addr or "").upper(),
             "license_no": (p_lic or "").upper(),
-            "start_date": p_start.strftime("%d/%m/%Y") if p_start else get_uk_now().strftime("%d/%m/%Y"),
-            "end_date": p_end.strftime("%d/%m/%Y") if p_end else DEFAULT_HIRE_END_DATE.strftime("%d/%m/%Y")
+            "start_date": format_date_val(p_start, get_uk_now().date()),
+            "end_date": format_date_val(p_end, DEFAULT_HIRE_END_DATE)
         }
         try:
             live_perm_pdf = generate_permission_letter(preview_perm_data)
@@ -1783,8 +1831,9 @@ with tab1:
                 for img in perm_imgs:
                     st.image(img, use_container_width=True)
             else:
-                st.info("Live document preview unavailable.")
+                st.info("Live document preview is currently unavailable.")
         except Exception as err:
+            logging.exception("Permission letter preview calculation error: %s", err)
             st.caption(f"Preview calculation error: {err}")
 
 with tab2:
@@ -1906,7 +1955,7 @@ with tab2:
         hirer_sig_preview = st.session_state.ocr_signature_bytes if c_hirer_sig == "Scanned Licence Signature" else None
         preview_contract_data = {
             "contract_no": c_no.strip().upper() if c_no else build_default_contract_no(c_name, c_rv),
-            "date": c_date.strftime("%d/%m/%Y") if c_date else get_uk_now().strftime("%d/%m/%Y"),
+            "date": format_date_val(c_date, get_uk_now().date()),
             "driver_name": (c_name or "").strip().upper(),
             "address": normalize_address(c_addr or ""),
             "postcode": (c_post or "").strip().upper(),
@@ -1919,10 +1968,10 @@ with tab2:
             "rent": (c_rent or "").strip(),
             "rate": (c_rate or "").strip(),
             "deposit": (c_dep or "").strip(),
-            "start_date": c_st.strftime("%d/%m/%Y") if c_st else get_uk_now().strftime("%d/%m/%Y"),
-            "expected_return": c_ret.strftime("%d/%m/%Y") if c_ret else DEFAULT_HIRE_END_DATE.strftime("%d/%m/%Y"),
-            "start_time": c_start_time.strftime("%H:%M") if c_start_time else get_uk_now().strftime("%H:%M"),
-            "return_time": c_return_time.strftime("%H:%M") if c_return_time else get_uk_now().strftime("%H:%M"),
+            "start_date": format_date_val(c_st, get_uk_now().date()),
+            "expected_return": format_date_val(c_ret, DEFAULT_HIRE_END_DATE),
+            "start_time": format_time_val(c_start_time),
+            "return_time": format_time_val(c_return_time),
             "registration": format_uk_reg(c_rv or ""),
             "car_make": (c_mk or "").strip().upper(),
             "car_model": (c_mv or "").strip().upper(),
@@ -1937,6 +1986,7 @@ with tab2:
                     st.caption(f"Page {idx} of {len(contract_imgs)}")
                     st.image(img, use_container_width=True)
             else:
-                st.info("Live document preview unavailable.")
+                st.info("Live document preview is currently unavailable.")
         except Exception as err:
+            logging.exception("Contract preview calculation error: %s", err)
             st.caption(f"Preview calculation error: {err}")

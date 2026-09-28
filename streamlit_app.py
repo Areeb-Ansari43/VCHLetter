@@ -10,4 +10,4 @@ if src_dir not in sys.path:
 target_script = os.path.join(src_dir, "streamlit_app.py")
 with open(target_script, "r", encoding="utf-8") as f:
     code = compile(f.read(), target_script, "exec")
-    exec(code, globals())
+    exec(code, {"__file__": target_script, "__name__": "__main__"})
