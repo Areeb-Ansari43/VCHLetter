@@ -11,6 +11,7 @@ from reportlab.pdfgen import canvas
 # Ensure src is in sys.path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "src")))
 
+import streamlit as st
 from streamlit_app import (
     build_default_doc_name,
     build_default_contract_no,
@@ -29,6 +30,7 @@ from streamlit_app import (
     download_from_supabase_storage,
     parse_licence,
     render_pdf_to_images,
+    apply_ocr_results_to_session_state,
 )
 
 def test_jpg_licence_loading():
@@ -377,3 +379,116 @@ def test_live_document_preview_rendering():
     assert len(c_imgs) == 2
     for img in c_imgs:
         assert isinstance(img, Image.Image)
+
+def test_ocr_populates_workspace_fields_immediately():
+    st.session_state.clear()
+    st.session_state.sel_reg = "YF22 UWM"
+
+    parsed_ocr = {
+        "forename": "JOHN",
+        "surname": "SMITH",
+        "licence": "SMITH901019A999",
+        "address": "123 TEST STREET",
+        "postcode": "SW1A 1AA",
+        "dob": "01/01/1990",
+        "expiry": "01/01/2030",
+        "signature_bytes": b"fake_sig_bytes",
+    }
+
+    apply_ocr_results_to_session_state(parsed_ocr)
+
+    assert st.session_state["p_form_name"] == "John Smith"
+    assert st.session_state["c_form_name"] == "John Smith"
+    assert st.session_state["p_form_lic"] == "SMITH901019A999"
+    assert st.session_state["c_form_lic"] == "SMITH901019A999"
+    assert st.session_state["c_form_addr"] == "123 TEST STREET"
+    assert st.session_state["c_form_post"] == "SW1A 1AA"
+    assert st.session_state["p_form_addr"] == "123 TEST STREET, SW1A 1AA"
+    assert st.session_state["c_form_dob"] == "01/01/1990"
+    assert st.session_state["c_form_exp"] == "01/01/2030"
+    assert st.session_state.ocr_signature_bytes == b"fake_sig_bytes"
+    assert st.session_state["perm_document_name"] == "Permission - John Smith - YF22UWM"
+    assert st.session_state["contract_document_name"] == "Contract - John Smith - YF22UWM"
+    assert st.session_state["c_form_no"] == "1608/JOHN-SMITH/YF22UWM2026"
+
+def test_permission_letter_preview_empty_fields():
+    empty_perm_data = {
+        "date": "28/09/2026",
+        "insurance_policy": "",
+        "registration": "",
+        "make_model": "",
+        "driver_name": "",
+        "address": "",
+        "license_no": "",
+        "start_date": "28/09/2026",
+        "end_date": "27/11/2026"
+    }
+    pdf_bytes = generate_permission_letter(empty_perm_data)
+    imgs = render_pdf_to_images(pdf_bytes)
+    assert len(imgs) == 1
+    assert isinstance(imgs[0], Image.Image)
+
+def test_contract_preview_empty_fields():
+    empty_contract_data = {
+        "contract_no": "1608/DRIVER/REG/2026",
+        "date": "28/09/2026",
+        "driver_name": "",
+        "address": "",
+        "postcode": "",
+        "dob": "",
+        "license_no": "",
+        "expiry_date": "",
+        "issuing_authority": "DVLA",
+        "phone": "",
+        "email": "",
+        "rent": "250/-",
+        "rate": "20/-",
+        "deposit": "500/-",
+        "start_date": "28/09/2026",
+        "expected_return": "27/11/2026",
+        "start_time": "12:00",
+        "return_time": "12:00",
+        "registration": "",
+        "car_make": "",
+        "car_model": "",
+        "owner_signature": "-- No Signature --",
+        "hirer_signature": None,
+    }
+    pdf_bytes = generate_contract(empty_contract_data)
+    imgs = render_pdf_to_images(pdf_bytes)
+    assert len(imgs) == 2
+    for img in imgs:
+        assert isinstance(img, Image.Image)
+
+def test_form_field_and_ocr_updates_live_preview():
+    # Render empty preview
+    empty_perm_pdf = generate_permission_letter({
+        "date": "28/09/2026", "insurance_policy": "", "registration": "",
+        "make_model": "", "driver_name": "", "address": "", "license_no": "",
+        "start_date": "28/09/2026", "end_date": "27/11/2026"
+    })
+    empty_img = render_pdf_to_images(empty_perm_pdf)[0]
+
+    # Populate via OCR
+    st.session_state.clear()
+    st.session_state.sel_reg = "YF22 UWM"
+    parsed_ocr = {
+        "forename": "JANE", "surname": "DOE", "licence": "DOE901019A999",
+        "address": "456 HIGH STREET", "postcode": "NW1 1AA",
+        "dob": "15/05/1985", "expiry": "15/05/2032", "signature_bytes": None
+    }
+    apply_ocr_results_to_session_state(parsed_ocr)
+
+    updated_perm_pdf = generate_permission_letter({
+        "date": "28/09/2026", "insurance_policy": "HAVFL-000211",
+        "registration": "YF22 UWM", "make_model": "MG 5 EV",
+        "driver_name": st.session_state["p_form_name"].upper(),
+        "address": st.session_state["p_form_addr"].upper(),
+        "license_no": st.session_state["p_form_lic"].upper(),
+        "start_date": "28/09/2026", "end_date": "27/11/2026"
+    })
+    updated_img = render_pdf_to_images(updated_perm_pdf)[0]
+
+    # PDF bytes and rendered image content must differ once populated with values
+    assert empty_perm_pdf != updated_perm_pdf
+    assert empty_img.tobytes() != updated_img.tobytes()

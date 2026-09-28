@@ -1498,6 +1498,66 @@ if st.session_state.current_page == "audit":
 for k, v in dict(ocr_name="", ocr_licence="", ocr_address="", ocr_postcode="", ocr_dob="", ocr_expiry="", ocr_signature_bytes=None, last_scan_id="", sel_reg="", sel_make="", sel_model="", scan_msg="", fleet_msg="", perm_pdf=None, perm_filename="Permission Letter", contract_pdf=None, contract_filename="Contract", contract_no="", pending_contract=None).items():
     if k not in st.session_state: st.session_state[k] = v
 
+def apply_ocr_results_to_session_state(p: dict):
+    raw_name = f"{p.get('forename', '')} {p.get('surname', '')}".strip()
+    client_name = format_driver_name_for_display(raw_name)
+    licence_no = (p.get("licence") or "").strip()
+    address = (p.get("address") or "").strip()
+    postcode = (p.get("postcode") or "").strip()
+    dob = (p.get("dob") or "").strip()
+    expiry = (p.get("expiry") or "").strip()
+    sig_bytes = p.get("signature_bytes")
+
+    if client_name:
+        st.session_state.ocr_name = client_name
+        st.session_state["p_form_name"] = client_name
+        st.session_state["c_form_name"] = client_name
+
+    if licence_no:
+        st.session_state.ocr_licence = licence_no
+        st.session_state["p_form_lic"] = licence_no
+        st.session_state["c_form_lic"] = licence_no
+
+    if address:
+        st.session_state.ocr_address = address
+        st.session_state["c_form_addr"] = address
+
+    if postcode:
+        st.session_state.ocr_postcode = postcode
+        st.session_state["c_form_post"] = postcode
+
+    curr_addr = st.session_state.get("c_form_addr", st.session_state.ocr_address)
+    curr_post = st.session_state.get("c_form_post", st.session_state.ocr_postcode)
+    if curr_addr or curr_post:
+        st.session_state["p_form_addr"] = get_full_address(curr_addr, curr_post)
+
+    if dob:
+        st.session_state.ocr_dob = dob
+        st.session_state["c_form_dob"] = normalize_date(dob)
+
+    if expiry:
+        st.session_state.ocr_expiry = expiry
+        st.session_state["c_form_exp"] = normalize_date(expiry)
+
+    if sig_bytes:
+        st.session_state.ocr_signature_bytes = sig_bytes
+
+    curr_driver_name = st.session_state.get("p_form_name") or client_name
+    curr_reg = st.session_state.get("p_form_reg") or st.session_state.sel_reg
+
+    perm_doc = build_default_doc_name("Permission", curr_driver_name, curr_reg, "Permission Letter")
+    contract_doc = build_default_doc_name("Contract", curr_driver_name, curr_reg, "Contract")
+    contract_no = build_default_contract_no(curr_driver_name, curr_reg)
+
+    st.session_state.perm_filename = perm_doc
+    st.session_state["perm_document_name"] = perm_doc
+
+    st.session_state.contract_filename = contract_doc
+    st.session_state["contract_document_name"] = contract_doc
+
+    st.session_state.contract_no = contract_no
+    st.session_state["c_form_no"] = contract_no
+
 st.markdown("### 🎛️ Shared Data Automation Panel")
 if st.session_state.scan_msg:
     notify(st.session_state.scan_msg, "warning" if st.session_state.scan_msg.startswith("⚠️") else "success")
@@ -1520,18 +1580,7 @@ with col_scan:
                     else:
                         raw = run_ocr(uploaded); p = parse_licence(raw)
                         p["signature_bytes"] = extract_signature_crop_fallback(uploaded)
-                    raw_name = f"{p.get('forename', '')} {p.get('surname', '')}".strip()
-                    client_name = format_driver_name_for_display(raw_name)
-                    st.session_state.ocr_name = client_name
-                    st.session_state.ocr_licence = p.get("licence", "")
-                    st.session_state.ocr_address = p.get("address", "")
-                    st.session_state.ocr_postcode = p.get("postcode", "")
-                    st.session_state.ocr_dob = p.get("dob", "")
-                    st.session_state.ocr_expiry = p.get("expiry", "")
-                    st.session_state.ocr_signature_bytes = p.get("signature_bytes")
-                    st.session_state.perm_filename = build_default_doc_name("Permission", client_name, st.session_state.sel_reg, "Permission Letter")
-                    st.session_state.contract_filename = build_default_doc_name("Contract", client_name, st.session_state.sel_reg, "Contract")
-                    st.session_state.contract_no = build_default_contract_no(client_name, st.session_state.sel_reg)
+                    apply_ocr_results_to_session_state(p)
                     st.session_state.scan_msg = "✅ Licence scanned successfully! Please double-check the fields below before generating documents."
                 except Exception as e:
                     st.session_state.scan_msg = f"⚠️ Licence scan failed: {str(e)}. Please enter details manually if needed."
@@ -1591,13 +1640,34 @@ with col_fleet:
             if car:
                 st.session_state.sel_reg = car["reg"]
                 st.session_state.sel_make, st.session_state.sel_model = split_make_model(car["model"])
-                st.session_state.perm_filename = build_default_doc_name("Permission", st.session_state.ocr_name, car["reg"], "Permission Letter")
-                st.session_state.contract_filename = build_default_doc_name("Contract", st.session_state.ocr_name, car["reg"], "Contract")
-                st.session_state.contract_no = build_default_contract_no(st.session_state.ocr_name, car["reg"])
+
+                st.session_state["p_form_reg"] = car["reg"]
+                st.session_state["p_form_mod"] = f"{st.session_state.sel_make} {st.session_state.sel_model}".strip()
+                st.session_state["c_form_rv"] = car["reg"]
+                st.session_state["c_form_mk"] = st.session_state.sel_make
+                st.session_state["c_form_mv"] = st.session_state.sel_model
+
+                curr_driver_name = st.session_state.get("p_form_name") or st.session_state.ocr_name
+                perm_doc = build_default_doc_name("Permission", curr_driver_name, car["reg"], "Permission Letter")
+                contract_doc = build_default_doc_name("Contract", curr_driver_name, car["reg"], "Contract")
+                contract_no = build_default_contract_no(curr_driver_name, car["reg"])
+
+                st.session_state.perm_filename = perm_doc
+                st.session_state["perm_document_name"] = perm_doc
+                st.session_state.contract_filename = contract_doc
+                st.session_state["contract_document_name"] = contract_doc
+                st.session_state.contract_no = contract_no
+                st.session_state["c_form_no"] = contract_no
+
                 st.session_state.fleet_msg = f"Fleet vehicle selected: {car['reg']} ({car['model']})"
                 st.rerun()
     elif st.session_state.sel_reg and not search_term.strip() and chosen == "-- Manual Entry / Custom Vehicle --":
         st.session_state.sel_reg = st.session_state.sel_make = st.session_state.sel_model = ""
+        st.session_state["p_form_reg"] = ""
+        st.session_state["p_form_mod"] = ""
+        st.session_state["c_form_rv"] = ""
+        st.session_state["c_form_mk"] = ""
+        st.session_state["c_form_mv"] = ""
         st.session_state.fleet_msg = ""
         st.rerun()
 
@@ -1696,15 +1766,15 @@ with tab1:
     with col_preview:
         st.subheader("Live Document Preview")
         preview_perm_data = {
-            "date": p_date.strftime("%d/%m/%Y") if p_date else "",
+            "date": p_date.strftime("%d/%m/%Y") if p_date else get_uk_now().strftime("%d/%m/%Y"),
             "insurance_policy": p_ins or "",
             "registration": format_uk_reg(p_reg or ""),
             "make_model": (p_mod or "").upper(),
             "driver_name": (p_name or "").upper(),
             "address": (p_addr or "").upper(),
             "license_no": (p_lic or "").upper(),
-            "start_date": p_start.strftime("%d/%m/%Y") if p_start else "",
-            "end_date": p_end.strftime("%d/%m/%Y") if p_end else ""
+            "start_date": p_start.strftime("%d/%m/%Y") if p_start else get_uk_now().strftime("%d/%m/%Y"),
+            "end_date": p_end.strftime("%d/%m/%Y") if p_end else DEFAULT_HIRE_END_DATE.strftime("%d/%m/%Y")
         }
         try:
             live_perm_pdf = generate_permission_letter(preview_perm_data)
@@ -1712,6 +1782,8 @@ with tab1:
             if perm_imgs:
                 for img in perm_imgs:
                     st.image(img, use_container_width=True)
+            else:
+                st.info("Live document preview unavailable.")
         except Exception as err:
             st.caption(f"Preview calculation error: {err}")
 
@@ -1833,8 +1905,8 @@ with tab2:
         st.subheader("Live Document Preview")
         hirer_sig_preview = st.session_state.ocr_signature_bytes if c_hirer_sig == "Scanned Licence Signature" else None
         preview_contract_data = {
-            "contract_no": c_no.strip().upper() if c_no else "N/A",
-            "date": c_date.strftime("%d/%m/%Y") if c_date else "",
+            "contract_no": c_no.strip().upper() if c_no else build_default_contract_no(c_name, c_rv),
+            "date": c_date.strftime("%d/%m/%Y") if c_date else get_uk_now().strftime("%d/%m/%Y"),
             "driver_name": (c_name or "").strip().upper(),
             "address": normalize_address(c_addr or ""),
             "postcode": (c_post or "").strip().upper(),
@@ -1847,10 +1919,10 @@ with tab2:
             "rent": (c_rent or "").strip(),
             "rate": (c_rate or "").strip(),
             "deposit": (c_dep or "").strip(),
-            "start_date": c_st.strftime("%d/%m/%Y") if c_st else "",
-            "expected_return": c_ret.strftime("%d/%m/%Y") if c_ret else "",
-            "start_time": c_start_time.strftime("%H:%M") if c_start_time else "",
-            "return_time": c_return_time.strftime("%H:%M") if c_return_time else "",
+            "start_date": c_st.strftime("%d/%m/%Y") if c_st else get_uk_now().strftime("%d/%m/%Y"),
+            "expected_return": c_ret.strftime("%d/%m/%Y") if c_ret else DEFAULT_HIRE_END_DATE.strftime("%d/%m/%Y"),
+            "start_time": c_start_time.strftime("%H:%M") if c_start_time else get_uk_now().strftime("%H:%M"),
+            "return_time": c_return_time.strftime("%H:%M") if c_return_time else get_uk_now().strftime("%H:%M"),
             "registration": format_uk_reg(c_rv or ""),
             "car_make": (c_mk or "").strip().upper(),
             "car_model": (c_mv or "").strip().upper(),
@@ -1864,5 +1936,7 @@ with tab2:
                 for idx, img in enumerate(contract_imgs, 1):
                     st.caption(f"Page {idx} of {len(contract_imgs)}")
                     st.image(img, use_container_width=True)
+            else:
+                st.info("Live document preview unavailable.")
         except Exception as err:
             st.caption(f"Preview calculation error: {err}")
