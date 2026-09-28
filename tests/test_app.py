@@ -1,6 +1,6 @@
 import io
 import pytest
-from datetime import date, datetime
+from datetime import date, datetime, time
 from zoneinfo import ZoneInfo
 import os
 import sys
@@ -31,6 +31,9 @@ from streamlit_app import (
     parse_licence,
     render_pdf_to_images,
     apply_ocr_results_to_session_state,
+    _find_img,
+    format_date_val,
+    format_time_val,
 )
 
 def test_jpg_licence_loading():
@@ -492,3 +495,68 @@ def test_form_field_and_ocr_updates_live_preview():
     # PDF bytes and rendered image content must differ once populated with values
     assert empty_perm_pdf != updated_perm_pdf
     assert empty_img.tobytes() != updated_img.tobytes()
+
+def test_find_img_template_resolution():
+    # Background images for permission letter and contract templates must be found
+    assert _find_img("image_f4efbe") is not None
+    assert _find_img("1") is not None
+    assert _find_img("2") is not None
+    assert _find_img("signature") is not None
+
+def test_format_date_and_time_helpers():
+    now_d = date(2026, 9, 28)
+    now_t = time(14, 30)
+
+    assert format_date_val(now_d) == "28/09/2026"
+    assert format_date_val(None, fallback_default=now_d) == "28/09/2026"
+    assert format_date_val("12/12/2026") == "12/12/2026"
+    assert format_date_val(None) == ""
+
+    assert format_time_val(now_t) == "14:30"
+    assert format_time_val("10:15") == "10:15"
+    assert ":" in format_time_val(None)
+
+def test_bmp_and_tiff_licence_loading():
+    bmp_buf = io.BytesIO()
+    im_bmp = Image.new("RGB", (200, 150), color="red")
+    im_bmp.save(bmp_buf, format="BMP")
+    bmp_buf.seek(0)
+    bmp_buf.name = "licence.bmp"
+
+    loaded_bmp = load_uploaded_image(bmp_buf)
+    assert isinstance(loaded_bmp, Image.Image)
+    assert loaded_bmp.size == (200, 150)
+
+    tiff_buf = io.BytesIO()
+    im_tiff = Image.new("RGB", (200, 150), color="yellow")
+    im_tiff.save(tiff_buf, format="TIFF")
+    tiff_buf.seek(0)
+    tiff_buf.name = "licence.tiff"
+
+    loaded_tiff = load_uploaded_image(tiff_buf)
+    assert isinstance(loaded_tiff, Image.Image)
+    assert loaded_tiff.size == (200, 150)
+
+def test_ocr_preserves_existing_manual_entries_when_missing():
+    st.session_state.clear()
+    st.session_state["p_form_name"] = "Existing Manual Name"
+    st.session_state["p_form_lic"] = "MANUAL12345"
+    st.session_state.ocr_name = "Existing Manual Name"
+    st.session_state.ocr_licence = "MANUAL12345"
+    st.session_state.ocr_address = ""
+    st.session_state.ocr_postcode = ""
+    st.session_state.sel_reg = ""
+
+    partial_ocr = {
+        "forename": "",
+        "surname": "",
+        "licence": "",
+        "address": "789 NEW ROAD",
+        "postcode": "E1 6AN",
+    }
+
+    apply_ocr_results_to_session_state(partial_ocr)
+
+    assert st.session_state["p_form_name"] == "Existing Manual Name"
+    assert st.session_state["p_form_lic"] == "MANUAL12345"
+    assert st.session_state["c_form_addr"] == "789 NEW ROAD"
