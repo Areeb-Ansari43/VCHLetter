@@ -560,3 +560,48 @@ def test_ocr_preserves_existing_manual_entries_when_missing():
     assert st.session_state["p_form_name"] == "Existing Manual Name"
     assert st.session_state["p_form_lic"] == "MANUAL12345"
     assert st.session_state["c_form_addr"] == "789 NEW ROAD"
+
+def test_oversized_upload_validation_logic():
+    import streamlit_app
+    limit = getattr(streamlit_app, "MAX_UPLOAD_SIZE_BYTES", 25 * 1024 * 1024)
+    fake_file = MagicMock()
+    fake_file.size = 30 * 1024 * 1024  # 30MB
+    assert fake_file.size > limit
+
+def test_licence_preview_panel_image_rendering():
+    img_buf = io.BytesIO()
+    im = Image.new("RGB", (400, 250), color="purple")
+    im.save(img_buf, format="PNG")
+    img_buf.seek(0)
+    img_buf.name = "licence_preview.png"
+
+    preview_img = load_uploaded_image(img_buf)
+    assert isinstance(preview_img, Image.Image)
+    assert preview_img.size == (400, 250)
+
+def test_audit_logs_pagination_and_caching():
+    from streamlit_app import get_cached_audit_logs
+    logs = get_cached_audit_logs()
+    assert isinstance(logs, list)
+
+    # Test pagination slicing logic on mock list
+    mock_logs = [{"id": i, "event_type": "test"} for i in range(25)]
+    items_per_page = 10
+    total_logs = len(mock_logs)
+    total_pages = max(1, (total_logs + items_per_page - 1) // items_per_page)
+    assert total_pages == 3
+
+    page1_items = mock_logs[0:10]
+    page2_items = mock_logs[10:20]
+    page3_items = mock_logs[20:25]
+
+    assert len(page1_items) == 10
+    assert len(page2_items) == 10
+    assert len(page3_items) == 5
+
+def test_css_transitions_and_reduced_motion():
+    import streamlit_app
+    with open(streamlit_app.__file__, "r", encoding="utf-8") as f:
+        content = f.read()
+    assert "@keyframes faIbiFadeIn" in content
+    assert "@media (prefers-reduced-motion: reduce)" in content

@@ -396,6 +396,22 @@ header {visibility: hidden;}
 [data-testid="stSidebar"] {display: none !important;}
 .stApp { padding-bottom: 46px; }
 
+@keyframes faIbiFadeIn {
+    0% { opacity: 0; transform: translateY(3px); }
+    100% { opacity: 1; transform: translateY(0); }
+}
+
+.main-workspace-content, .audit-page-content, .licence-preview-card, .doc-preview-card {
+    animation: faIbiFadeIn 0.22s ease-out forwards;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .main-workspace-content, .audit-page-content, .licence-preview-card, .doc-preview-card {
+        animation: none !important;
+        transition: none !important;
+    }
+}
+
 .fa-ibi-footer {
     position: fixed;
     left: 0;
@@ -1455,10 +1471,14 @@ with nav_col3:
 # ─────────────────────────────────────────────
 #  AUDIT LOGS DEDICATED PAGE
 # ─────────────────────────────────────────────
+@st.cache_data(ttl=5)
+def get_cached_audit_logs():
+    return get_audit_logs()
+
 def render_audit_page():
     st.caption("History of created documents & security verification attempts")
 
-    logs = get_audit_logs()
+    logs = get_cached_audit_logs()
     if not logs:
         st.info("No audit log records found.")
         return
@@ -1480,6 +1500,20 @@ def render_audit_page():
         st.write("No matching log records found.")
         return
 
+    items_per_page = 10
+    total_logs = len(filtered_logs)
+    total_pages = max(1, (total_logs + items_per_page - 1) // items_per_page)
+
+    if "audit_page_num" not in st.session_state:
+        st.session_state.audit_page_num = 1
+    if st.session_state.audit_page_num > total_pages:
+        st.session_state.audit_page_num = total_pages
+
+    current_page_idx = st.session_state.audit_page_num
+    start_idx = (current_page_idx - 1) * items_per_page
+    end_idx = min(start_idx + items_per_page, total_logs)
+    page_items = filtered_logs[start_idx:end_idx]
+
     # Table Header
     hdr_col1, hdr_col2, hdr_col3, hdr_col4, hdr_col5 = st.columns([2, 2.5, 3, 3, 2])
     with hdr_col1:
@@ -1495,7 +1529,7 @@ def render_audit_page():
 
     st.markdown("<hr style='margin: 4px 0 12px 0;'>", unsafe_allow_html=True)
 
-    for idx, entry in enumerate(filtered_logs):
+    for idx, entry in enumerate(page_items):
         c1, c2, c3, c4, c5 = st.columns([2, 2.5, 3, 3, 2])
         doc_name = entry.get("doc_name", "")
         file_path = entry.get("file_path", "")
@@ -1510,7 +1544,7 @@ def render_audit_page():
             st.write(doc_name or "—")
         with c5:
             if doc_name:
-                btn_key = f"dl_audit_btn_{idx}_{abs(hash(entry.get('timestamp', '') + doc_name)) % 100000}"
+                btn_key = f"dl_audit_btn_{start_idx + idx}_{abs(hash(entry.get('timestamp', '') + doc_name)) % 100000}"
                 cache_key = f"audit_pdf_cache_{btn_key}"
 
                 if cache_key in st.session_state and st.session_state[cache_key]:
@@ -1535,6 +1569,19 @@ def render_audit_page():
             else:
                 st.caption("No file")
         st.markdown("<hr style='margin: 2px 0 8px 0; border-color: #333;'>", unsafe_allow_html=True)
+
+    # Pagination navigation bar
+    p_col1, p_col2, p_col3 = st.columns([2, 4, 2])
+    with p_col1:
+        if st.button("← Previous", disabled=(current_page_idx <= 1), key="audit_prev_btn", use_container_width=True):
+            st.session_state.audit_page_num = max(1, current_page_idx - 1)
+            st.rerun()
+    with p_col2:
+        st.markdown(f"<div style='text-align: center; color: #888; margin-top: 6px;'>Page <b>{current_page_idx}</b> of <b>{total_pages}</b> ({total_logs} total records)</div>", unsafe_allow_html=True)
+    with p_col3:
+        if st.button("Next →", disabled=(current_page_idx >= total_pages), key="audit_next_btn", use_container_width=True):
+            st.session_state.audit_page_num = min(total_pages, current_page_idx + 1)
+            st.rerun()
 
 if st.session_state.current_page == "audit":
     render_audit_page()
@@ -1616,26 +1663,48 @@ col_scan, col_fleet = st.columns(2)
 with col_scan:
     uploaded = st.file_uploader("📷 Driver's Licence Scanner", type=["jpg", "jpeg", "png", "pdf", "webp", "bmp", "tiff", "tif", "heic", "heif"], key="global_engine_scanner")
     use_azure = azure_ocr_available()
-    if uploaded and not use_azure:
-        st.caption("ℹ️ Using the built-in Tesseract scanner. Add `AZURE_DOCINTEL_ENDPOINT` and `AZURE_DOCINTEL_KEY` to secrets for much more accurate scanning via Azure AI Document Intelligence.")
-    if uploaded and (use_azure or pytesseract):
-        fid = f"{uploaded.name}_{uploaded.size}"
-        if st.session_state.last_scan_id != fid:
-            with st.spinner("Processing Elements..."):
-                try:
-                    if use_azure:
-                        p = run_ocr_azure(uploaded)
-                    else:
-                        raw = run_ocr(uploaded); p = parse_licence(raw)
-                        p["signature_bytes"] = extract_signature_crop_fallback(uploaded)
-                    apply_ocr_results_to_session_state(p)
-                    st.session_state.scan_msg = "✅ Licence scanned successfully! Please double-check the fields below before generating documents."
-                except Exception as e:
-                    st.session_state.scan_msg = f"⚠️ Licence scan failed: {str(e)}. Please enter details manually if needed."
-                st.session_state.last_scan_id = fid
-            st.rerun()
-    elif uploaded and not use_azure and not pytesseract:
-        st.error("Neither Azure Document Intelligence (secrets not configured) nor pytesseract is available, so scanning can't run.")
+    MAX_UPLOAD_SIZE_BYTES = 25 * 1024 * 1024  # 25 MB
+
+    if uploaded:
+        if uploaded.size > MAX_UPLOAD_SIZE_BYTES:
+            st.error("This file is too large. Please upload a smaller image or PDF.")
+        else:
+            if not use_azure:
+                st.caption("ℹ️ Using the built-in Tesseract scanner. Add `AZURE_DOCINTEL_ENDPOINT` and `AZURE_DOCINTEL_KEY` to secrets for much more accurate scanning via Azure AI Document Intelligence.")
+            if use_azure or pytesseract:
+                fid = f"{uploaded.name}_{uploaded.size}"
+                if st.session_state.last_scan_id != fid:
+                    with st.spinner("Processing Elements..."):
+                        try:
+                            if use_azure:
+                                p = run_ocr_azure(uploaded)
+                            else:
+                                raw = run_ocr(uploaded); p = parse_licence(raw)
+                                p["signature_bytes"] = extract_signature_crop_fallback(uploaded)
+                            apply_ocr_results_to_session_state(p)
+                            st.session_state.scan_msg = "✅ Licence scanned successfully! Please double-check the fields below before generating documents."
+                        except Exception as e:
+                            st.session_state.scan_msg = f"⚠️ Licence scan failed: {str(e)}. Please enter details manually if needed."
+                        st.session_state.last_scan_id = fid
+                    st.rerun()
+            else:
+                st.error("Neither Azure Document Intelligence (secrets not configured) nor pytesseract is available, so scanning can't run.")
+
+    st.markdown("##### Driver's Licence Preview")
+    if uploaded and uploaded.size <= MAX_UPLOAD_SIZE_BYTES:
+        try:
+            lic_preview_img = load_uploaded_image(uploaded)
+            st.image(lic_preview_img, caption=f"Uploaded Licence ({uploaded.name})", use_container_width=True)
+        except Exception as img_err:
+            st.warning(f"Unable to render licence preview: {img_err}")
+    else:
+        st.markdown("""
+        <div style="background-color: #1a1c23; border: 1px dashed #3f4454; border-radius: 8px; padding: 24px; text-align: center; color: #9ca3af; margin-top: 8px;">
+            <div style="font-size: 24px; margin-bottom: 6px;">💳</div>
+            <div style="font-weight: 600; font-size: 14px; color: #d1d5db;">Licence Preview</div>
+            <div style="font-size: 12px; margin-top: 4px;">Upload a driver's licence to preview it here.</div>
+        </div>
+        """, unsafe_allow_html=True)
 
 with col_fleet:
     st.markdown("##### Fleet Vehicle Search & Selection")
@@ -1831,9 +1900,10 @@ with tab1:
                 for img in perm_imgs:
                     st.image(img, use_container_width=True)
             else:
+                logging.error("render_pdf_to_images returned empty image list for Permission Letter preview")
                 st.info("Live document preview is currently unavailable.")
         except Exception as err:
-            logging.exception("Permission letter preview calculation error: %s", err)
+            logging.exception("Permission letter preview calculation error for data %s: %s", preview_perm_data, err)
             st.caption(f"Preview calculation error: {err}")
 
 with tab2:
@@ -1986,7 +2056,8 @@ with tab2:
                     st.caption(f"Page {idx} of {len(contract_imgs)}")
                     st.image(img, use_container_width=True)
             else:
+                logging.error("render_pdf_to_images returned empty image list for Contract preview")
                 st.info("Live document preview is currently unavailable.")
         except Exception as err:
-            logging.exception("Contract preview calculation error: %s", err)
+            logging.exception("Contract preview calculation error for data %s: %s", preview_contract_data, err)
             st.caption(f"Preview calculation error: {err}")
