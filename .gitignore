@@ -1,2 +1,3 @@
 __pycache__/
 src/audit_logs.json
+.streamlit/secrets.toml
