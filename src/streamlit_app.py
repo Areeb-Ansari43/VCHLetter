@@ -291,7 +291,7 @@ fav_path = FAVICON_URL or _find_img("Screenshot_2026-06-09_230035") or "🚗"
 st.set_page_config(
     page_title="FA-IBI Workspace",
     page_icon=fav_path,
-    layout="centered"
+    layout="wide"
 )
 
 # ─────────────────────────────────────────────
@@ -639,20 +639,21 @@ def build_default_contract_no(name: str, reg: str) -> str:
     return f"1608/{name_part}/{reg_part}"
 
 def build_default_doc_name(prefix: str, name: str, reg: str, fallback: str) -> str:
-    """Build auto-named document filename matching: Permission/Contract [Customer Name] [Registration]."""
-    parts = [prefix]
+    """Build auto-named document filename matching: Prefix - [Customer Name] - [Registration]."""
     fmt_name = format_driver_name_for_display(name, reg)
     clean_reg = re.sub(r"[^A-Za-z0-9]", "", str(reg or "")).upper()
+    has_reg = bool(clean_reg and clean_reg != "REG")
 
-    if fmt_name:
-        parts.append(fmt_name)
-
-    if clean_reg and clean_reg != "REG":
-        parts.append(clean_reg)
-
-    if len(parts) == 1:
+    if fmt_name and has_reg:
+        doc_str = f"{prefix} - {fmt_name} - {clean_reg}"
+    elif fmt_name:
+        doc_str = f"{prefix} - {fmt_name}"
+    elif has_reg:
+        doc_str = f"{prefix} - {clean_reg}"
+    else:
         return fallback
-    return clean_document_name(" ".join(parts), fallback)
+
+    return clean_document_name(doc_str, fallback)
 
 def first_date(fragment: str) -> str:
     m = re.search(r"\d{1,2}[./\-]\d{1,2}[./\-]\d{2,4}", fragment)
@@ -1317,22 +1318,38 @@ def generate_calibration_grid() -> bytes:
             cv.drawString(2, y + 1, str(y))
     cv.save(); buf.seek(0); return buf.getvalue()
 
+def render_pdf_to_images(pdf_bytes: bytes) -> list[Image.Image]:
+    """Convert PDF bytes into PIL Images (one per page) for live full-page A4 document preview."""
+    if pypdfium2 is None or not pdf_bytes:
+        return []
+    try:
+        pdf = pypdfium2.PdfDocument(pdf_bytes)
+        imgs = []
+        for page in pdf:
+            imgs.append(page.render(scale=2).to_pil().convert("RGB"))
+        return imgs
+    except Exception:
+        return []
+
 # ─────────────────────────────────────────────
 #  GATEKEEPER SECURITY PORTAL
 # ─────────────────────────────────────────────
 if not st.session_state.authenticated:
-    st.subheader("🔐 System Security Verification")
+    st.subheader("System Security Verification")
     code = st.text_input("Access PIN", type="password", placeholder="Enter key…")
-    if st.button("Verify Key"):
+    if st.button("Verify Key", icon=":material/lock_open:"):
         if code == st.secrets.get("ACCESS_KEY", ""):
             st.session_state.authenticated = True
             add_audit_log("Verification PIN Entered", details="Successful Verification PIN Entry")
             if cookie_manager is not None:
-                cookie_manager.set(
-                    AUTH_COOKIE_NAME, "true",
-                    expires_at=datetime.now() + timedelta(days=AUTH_COOKIE_DAYS),
-                    key="set_auth_cookie",
-                )
+                try:
+                    cookie_manager.set(
+                        AUTH_COOKIE_NAME, "true",
+                        expires_at=datetime.now() + timedelta(days=AUTH_COOKIE_DAYS),
+                        key="set_auth_cookie",
+                    )
+                except Exception:
+                    pass
             st.rerun()
         else:
             add_audit_log("Verification PIN Entered", details="Failed Verification PIN Entry")
@@ -1346,30 +1363,42 @@ query_page = st.query_params.get("page", "workspace")
 if "current_page" not in st.session_state:
     st.session_state.current_page = "audit" if query_page == "audit" else "workspace"
 
-nav_col1, nav_col2, nav_col3 = st.columns([3, 3, 1])
+nav_col1, nav_col2, nav_col3 = st.columns([4, 4, 2])
 with nav_col1:
     if st.session_state.current_page == "audit":
-        st.title("📋 System Audit Logs")
+        st.title("System Audit Logs")
     else:
         st.title("FA-IBI Workspace")
 
 with nav_col2:
-    page_selection = st.radio(
-        "Navigation",
-        ["🏠 Workspace", "📋 Audit Logs"],
-        index=1 if st.session_state.current_page == "audit" else 0,
-        horizontal=True,
-        label_visibility="collapsed",
-        key="app_nav_radio"
-    )
-    new_page = "audit" if page_selection == "📋 Audit Logs" else "workspace"
-    if new_page != st.session_state.current_page:
-        st.session_state.current_page = new_page
-        st.query_params["page"] = new_page
-        st.rerun()
+    btn_c1, btn_c2 = st.columns(2)
+    with btn_c1:
+        if st.button(
+            "Workspace",
+            key="nav_btn_workspace",
+            type="primary" if st.session_state.current_page == "workspace" else "secondary",
+            use_container_width=True,
+            icon=":material/space_dashboard:"
+        ):
+            if st.session_state.current_page != "workspace":
+                st.session_state.current_page = "workspace"
+                st.query_params["page"] = "workspace"
+                st.rerun()
+    with btn_c2:
+        if st.button(
+            "Audit Logs",
+            key="nav_btn_audit",
+            type="primary" if st.session_state.current_page == "audit" else "secondary",
+            use_container_width=True,
+            icon=":material/history:"
+        ):
+            if st.session_state.current_page != "audit":
+                st.session_state.current_page = "audit"
+                st.query_params["page"] = "audit"
+                st.rerun()
 
 with nav_col3:
-    if st.button("🚪 Log out", key="top_logout_btn"):
+    if st.button("Log out", key="top_logout_btn", use_container_width=True, icon=":material/logout:"):
         st.session_state.authenticated = False
         if cookie_manager is not None:
             cookie_manager.delete(AUTH_COOKIE_NAME, key="delete_auth_cookie")
@@ -1477,7 +1506,7 @@ if st.session_state.fleet_msg:
 col_scan, col_fleet = st.columns(2)
 
 with col_scan:
-    uploaded = st.file_uploader("📷 Driver's Licence Scanner", type=["jpg","png","jpeg","pdf"], key="global_engine_scanner")
+    uploaded = st.file_uploader("📷 Driver's Licence Scanner", type=["jpg", "jpeg", "png", "pdf", "webp", "bmp", "tiff", "tif"], key="global_engine_scanner")
     use_azure = azure_ocr_available()
     if uploaded and not use_azure:
         st.caption("ℹ️ Using the built-in Tesseract scanner. Add `AZURE_DOCINTEL_ENDPOINT` and `AZURE_DOCINTEL_KEY` to secrets for much more accurate scanning via Azure AI Document Intelligence.")
@@ -1512,20 +1541,17 @@ with col_scan:
         st.error("Neither Azure Document Intelligence (secrets not configured) nor pytesseract is available, so scanning can't run.")
 
 with col_fleet:
-    st.markdown("##### 🚗 Fleet Vehicle Search & Selector")
+    st.markdown("##### Fleet Vehicle Search & Selection")
 
-    # Category Filter Pills / Radio
     cat_filter = st.radio(
-        "Filter Category",
+        "Category Filter",
         ["All Vehicles", "Mercedes-Benz", "Toyota", "Other Premium & EVs"],
         horizontal=True,
         key="fleet_category_filter"
     )
 
-    # Text Search Bar
-    search_term = st.text_input("🔍 Search Reg or Model", placeholder="e.g. AF70, E220D, Tesla...", key="fleet_search_term")
+    search_term = st.text_input("Search Vehicle", placeholder="Type registration or model (e.g. AF70, Tesla...)", key="fleet_search_term")
 
-    # Filter FLEET_VEHICLES based on category and search query
     filtered_vehicles = FLEET_VEHICLES
     if cat_filter != "All Vehicles":
         filtered_vehicles = [v for v in filtered_vehicles if v.get("category") == cat_filter]
@@ -1537,44 +1563,29 @@ with col_fleet:
             if term in v["reg"].upper() or term in v["model"].upper()
         ]
 
-    # Dynamic live autocomplete dropdown directly under search box when typing
-    if search_term.strip() and filtered_vehicles:
-        live_opts = ["-- Select Matching Vehicle --"] + [f"{v['reg']} ({v['model']})" for v in filtered_vehicles]
-        selected_match = st.selectbox(
-            f"⚡ Autocomplete Matches ({len(filtered_vehicles)} found)",
-            live_opts,
-            key="fleet_live_autocomplete"
-        )
-        if selected_match != "-- Select Matching Vehicle --":
-            rk = selected_match.split(" (")[0]
-            if st.session_state.sel_reg != rk:
-                car = next((v for v in FLEET_VEHICLES if v["reg"] == rk), None)
-                if car:
-                    st.session_state.sel_reg = car["reg"]
-                    st.session_state.sel_make, st.session_state.sel_model = split_make_model(car["model"])
-                    st.session_state.fleet_msg = f"✅ Fleet specs synchronized: {car['reg']} ({car['model']})"
-                    st.rerun()
+    opts = ["-- Manual Entry / Custom Vehicle --"] + [f"{v['reg']}  |  {v['model']}" for v in filtered_vehicles]
 
-    opts = ["-- Manual Entry --"] + [f"{v['reg']} ({v['model']})" for v in filtered_vehicles]
-
-    # Handle current selection preservation when filtering
-    cur = "-- Manual Entry --"
+    cur = "-- Manual Entry / Custom Vehicle --"
     if st.session_state.sel_reg:
         matched_opt = next((o for o in opts if o.startswith(st.session_state.sel_reg)), None)
         if matched_opt:
             cur = matched_opt
         else:
-            # If current selection isn't in filtered list, offer it as selected option
             selected_car = next((v for v in FLEET_VEHICLES if v["reg"] == st.session_state.sel_reg), None)
             if selected_car:
-                cur_label = f"{selected_car['reg']} ({selected_car['model']})"
+                cur_label = f"{selected_car['reg']}  |  {selected_car['model']}"
                 opts.insert(1, cur_label)
                 cur = cur_label
 
-    chosen = st.selectbox(f"Select Vehicle ({len(filtered_vehicles)} found)", opts, index=opts.index(cur), key="global_engine_fleet")
+    chosen = st.selectbox(
+        f"Select Vehicle ({len(filtered_vehicles)} matching)",
+        opts,
+        index=opts.index(cur),
+        key="global_engine_fleet"
+    )
 
-    if chosen != "-- Manual Entry --":
-        rk = chosen.split(" (")[0]
+    if chosen != "-- Manual Entry / Custom Vehicle --":
+        rk = chosen.split("  |  ")[0].strip()
         if st.session_state.sel_reg != rk:
             car = next((v for v in FLEET_VEHICLES if v["reg"] == rk), None)
             if car:
@@ -1583,12 +1594,28 @@ with col_fleet:
                 st.session_state.perm_filename = build_default_doc_name("Permission", st.session_state.ocr_name, car["reg"], "Permission Letter")
                 st.session_state.contract_filename = build_default_doc_name("Contract", st.session_state.ocr_name, car["reg"], "Contract")
                 st.session_state.contract_no = build_default_contract_no(st.session_state.ocr_name, car["reg"])
-                st.session_state.fleet_msg = f"✅ Fleet specs synchronized: {car['reg']} ({car['model']})"
+                st.session_state.fleet_msg = f"Fleet vehicle selected: {car['reg']} ({car['model']})"
                 st.rerun()
-    elif st.session_state.sel_reg and not search_term.strip():
+    elif st.session_state.sel_reg and not search_term.strip() and chosen == "-- Manual Entry / Custom Vehicle --":
         st.session_state.sel_reg = st.session_state.sel_make = st.session_state.sel_model = ""
         st.session_state.fleet_msg = ""
         st.rerun()
+
+    if st.session_state.sel_reg:
+        selected_car = next((v for v in FLEET_VEHICLES if v["reg"] == st.session_state.sel_reg), None)
+        cat_disp = selected_car["category"] if selected_car else "Fleet Vehicle"
+        st.markdown(f"""
+        <div style="background-color: #1a1c23; border: 1px solid #2e323e; border-radius: 6px; padding: 10px 14px; margin-top: 8px;">
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+                <div>
+                    <span style="font-weight: 700; font-size: 15px; color: #ff8c00; letter-spacing: 0.5px;">{st.session_state.sel_reg}</span>
+                    <span style="font-size: 13px; color: #d0d0d0; margin-left: 10px;">{st.session_state.sel_make} {st.session_state.sel_model}</span>
+                </div>
+                <span style="background-color: #1e3a2b; color: #43d978; font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 4px; border: 1px solid #2d5a3f;">Available</span>
+            </div>
+            <div style="font-size: 11px; color: #888; margin-top: 4px;">Category: {cat_disp}</div>
+        </div>
+        """, unsafe_allow_html=True)
 
 st.markdown("---")
 if st.session_state.pending_contract:
@@ -1605,61 +1632,107 @@ if st.session_state.pending_contract:
 
 DEFAULT_HIRE_END_DATE = date(2026, 11, 27)
 
-tab1, tab2 = st.tabs(["📝 Permission Letter", "📜 Contract Generator"])
+tab1, tab2 = st.tabs(["Permission Letter", "Contract Generator"])
 with tab1:
-    with st.form("perm_form"):
+    col_form, col_preview = st.columns([1, 1], gap="medium")
+
+    with col_form:
+        st.subheader("Permission Letter Details")
         c1, c2 = st.columns(2)
         with c1:
-            p_date, p_ins, p_reg, p_mod = st.date_input("Document Date", get_uk_now().date(), format="DD/MM/YYYY", key="p_form_date"), st.text_input("Insurance Policy No", "HAVFL-000211"), st.text_input("Vehicle Registration", value=st.session_state.sel_reg), st.text_input("Make & Model", value=f"{st.session_state.sel_make} {st.session_state.sel_model}".strip())
+            p_date = st.date_input("Document Date", get_uk_now().date(), format="DD/MM/YYYY", key="p_form_date")
+            p_ins = st.text_input("Insurance Policy No", "HAVFL-000211", key="p_form_ins")
+            p_reg = st.text_input("Vehicle Registration", value=st.session_state.sel_reg, key="p_form_reg")
+            p_mod = st.text_input("Make & Model", value=f"{st.session_state.sel_make} {st.session_state.sel_model}".strip(), key="p_form_mod")
         with c2:
-            p_name, p_lic, p_start, p_end = st.text_input("Driver Full Name", value=st.session_state.ocr_name), st.text_input("Driving Licence No", value=st.session_state.ocr_licence), st.date_input("Hire Start Date", get_uk_now().date(), format="DD/MM/YYYY", key="p_form_start"), st.date_input("Hire End Date", DEFAULT_HIRE_END_DATE, format="DD/MM/YYYY", key="p_form_end")
+            p_name = st.text_input("Driver Full Name", value=st.session_state.ocr_name, key="p_form_name")
+            p_lic = st.text_input("Driving Licence No", value=st.session_state.ocr_licence, key="p_form_lic")
+            p_start = st.date_input("Hire Start Date", get_uk_now().date(), format="DD/MM/YYYY", key="p_form_start")
+            p_end = st.date_input("Hire End Date", DEFAULT_HIRE_END_DATE, format="DD/MM/YYYY", key="p_form_end")
+
         perm_addr_val = get_full_address(st.session_state.ocr_address, st.session_state.ocr_postcode)
-        p_addr = st.text_area("Driver Address", value=perm_addr_val)
-        default_p_doc_name = build_default_doc_name("Permission", st.session_state.ocr_name, st.session_state.sel_reg, "Permission Letter")
+        p_addr = st.text_area("Driver Address", value=perm_addr_val, key="p_form_addr")
+
+        default_p_doc_name = build_default_doc_name("Permission", p_name, p_reg, "Permission Letter")
         p_doc_name = st.text_input("Document Name", default_p_doc_name, key="perm_document_name")
-        go_p = st.form_submit_button("🖨️ Generate Permission Letter PDF")
-    if go_p:
-        expected_auto_perm_name = build_default_doc_name("Permission", p_name, p_reg, "Permission Letter")
-        perm_clean_name = clean_document_name(p_doc_name, expected_auto_perm_name)
-        if perm_clean_name in ("Permission Letter", "Permission", "Permission Driver") and p_name and clean_name(p_name).upper() != "DRIVER":
-            perm_clean_name = expected_auto_perm_name
-        pdf_bytes = generate_permission_letter({"date": p_date.strftime("%d/%m/%Y"), "insurance_policy": p_ins, "registration": format_uk_reg(p_reg), "make_model": p_mod.upper(), "driver_name": p_name.upper(), "address": p_addr.upper(), "license_no": p_lic.upper(), "start_date": p_start.strftime("%d/%m/%Y"), "end_date": p_end.strftime("%d/%m/%Y")})
-        st.session_state.perm_pdf = pdf_bytes
-        st.session_state.perm_filename = perm_clean_name
-        sp_filename = sync_to_supabase(pdf_bytes, perm_clean_name, "Permission Letter", driver_ref=p_name.upper(), vehicle_reg=format_uk_reg(p_reg))
-        add_audit_log("Permission Letter Generated", details=f"Driver: {p_name.upper()}, Reg: {format_uk_reg(p_reg)}", doc_name=f"{perm_clean_name}.pdf", file_path=f"driver_documents/{sp_filename}" if sp_filename else "")
-        st.rerun()
-    if st.session_state.perm_pdf:
-        p_btn_col1, p_btn_col2 = st.columns([1, 1])
-        with p_btn_col1:
-            st.download_button("📥 Download Permission Letter PDF", data=st.session_state.perm_pdf, file_name=f"{st.session_state.perm_filename}.pdf", mime="application/pdf", key="dl_perm_btn", use_container_width=True)
-        with p_btn_col2:
-            if st.button("☁️ Save to Google Drive", key="gdrive_perm_btn", use_container_width=True):
-                with st.spinner("Uploading to Google Drive..."):
-                    ok, msg = save_to_google_drive(st.session_state.perm_pdf, st.session_state.perm_filename, st.session_state.sel_reg or p_reg)
-                    if ok:
-                        notify(msg, "success")
-                    else:
-                        notify(msg, "error")
+
+        go_p = st.button("Generate Permission Letter PDF", key="go_p_btn", type="primary", use_container_width=True, icon=":material/print:")
+
+        if go_p:
+            expected_auto_perm_name = build_default_doc_name("Permission", p_name, p_reg, "Permission Letter")
+            perm_clean_name = clean_document_name(p_doc_name, expected_auto_perm_name)
+            if perm_clean_name in ("Permission Letter", "Permission", "Permission Driver") and p_name and clean_name(p_name).upper() != "DRIVER":
+                perm_clean_name = expected_auto_perm_name
+            pdf_bytes = generate_permission_letter({
+                "date": p_date.strftime("%d/%m/%Y"),
+                "insurance_policy": p_ins,
+                "registration": format_uk_reg(p_reg),
+                "make_model": p_mod.upper(),
+                "driver_name": p_name.upper(),
+                "address": p_addr.upper(),
+                "license_no": p_lic.upper(),
+                "start_date": p_start.strftime("%d/%m/%Y"),
+                "end_date": p_end.strftime("%d/%m/%Y")
+            })
+            st.session_state.perm_pdf = pdf_bytes
+            st.session_state.perm_filename = perm_clean_name
+            sp_filename = sync_to_supabase(pdf_bytes, perm_clean_name, "Permission Letter", driver_ref=p_name.upper(), vehicle_reg=format_uk_reg(p_reg))
+            add_audit_log("Permission Letter Generated", details=f"Driver: {p_name.upper()}, Reg: {format_uk_reg(p_reg)}", doc_name=f"{perm_clean_name}.pdf", file_path=f"driver_documents/{sp_filename}" if sp_filename else "")
+            st.rerun()
+
+        if st.session_state.perm_pdf:
+            p_btn_col1, p_btn_col2 = st.columns([1, 1])
+            with p_btn_col1:
+                st.download_button("Download Permission Letter PDF", data=st.session_state.perm_pdf, file_name=f"{st.session_state.perm_filename}.pdf", mime="application/pdf", key="dl_perm_btn", use_container_width=True, icon=":material/download:")
+            with p_btn_col2:
+                if st.button("Save to Google Drive", key="gdrive_perm_btn", use_container_width=True, icon=":material/cloud_upload:"):
+                    with st.spinner("Uploading to Google Drive..."):
+                        ok, msg = save_to_google_drive(st.session_state.perm_pdf, st.session_state.perm_filename, st.session_state.sel_reg or p_reg)
+                        if ok:
+                            notify(msg, "success")
+                        else:
+                            notify(msg, "error")
+
+    with col_preview:
+        st.subheader("Live Document Preview")
+        preview_perm_data = {
+            "date": p_date.strftime("%d/%m/%Y") if p_date else "",
+            "insurance_policy": p_ins or "",
+            "registration": format_uk_reg(p_reg or ""),
+            "make_model": (p_mod or "").upper(),
+            "driver_name": (p_name or "").upper(),
+            "address": (p_addr or "").upper(),
+            "license_no": (p_lic or "").upper(),
+            "start_date": p_start.strftime("%d/%m/%Y") if p_start else "",
+            "end_date": p_end.strftime("%d/%m/%Y") if p_end else ""
+        }
+        try:
+            live_perm_pdf = generate_permission_letter(preview_perm_data)
+            perm_imgs = render_pdf_to_images(live_perm_pdf)
+            if perm_imgs:
+                for img in perm_imgs:
+                    st.image(img, use_container_width=True)
+        except Exception as err:
+            st.caption(f"Preview calculation error: {err}")
 
 with tab2:
-    with st.expander("🧭 Field positions off? Calibrate them"):
+    with st.expander("Field positions off? Calibrate them"):
         st.caption(
             "Download this to see a red 20pt grid drawn over your actual "
             "contract template. Read off the x/y where each field's blank "
             "line sits, then update `CONTRACT_PAGE1_FIELDS` / "
             "`CONTRACT_PAGE2_FIELDS` near the top of app.py."
         )
-        st.download_button("📐 Download Calibration Grid PDF", data=generate_calibration_grid(),
-                            file_name="Calibration_Grid.pdf", mime="application/pdf", key="dl_cal_btn")
+        st.download_button("Download Calibration Grid PDF", data=generate_calibration_grid(),
+                            file_name="Calibration_Grid.pdf", mime="application/pdf", key="dl_cal_btn", icon=":material/grid_on:")
 
     if st.session_state.contract_pdf:
-        notify("🎉 Contract PDF Created Successfully!", "success")
+        notify("Contract PDF Created Successfully!", "success")
         c_btn_col1, c_btn_col2 = st.columns([1, 1])
         with c_btn_col1:
-            st.download_button("📥 Download Generated Contract PDF", data=st.session_state.contract_pdf, file_name=f"{st.session_state.contract_filename}.pdf", mime="application/pdf", key="dl_contract_btn", use_container_width=True)
+            st.download_button("Download Generated Contract PDF", data=st.session_state.contract_pdf, file_name=f"{st.session_state.contract_filename}.pdf", mime="application/pdf", key="dl_contract_btn", use_container_width=True, icon=":material/download:")
         with c_btn_col2:
-            if st.button("☁️ Save to Google Drive", key="gdrive_contract_btn", use_container_width=True):
+            if st.button("Save to Google Drive", key="gdrive_contract_btn", use_container_width=True, icon=":material/cloud_upload:"):
                 with st.spinner("Uploading to Google Drive..."):
                     ok, msg = save_to_google_drive(st.session_state.contract_pdf, st.session_state.contract_filename, st.session_state.sel_reg)
                     if ok:
@@ -1667,44 +1740,129 @@ with tab2:
                     else:
                         notify(msg, "error")
         st.markdown("---")
-    with st.form("contract_form"):
+
+    col_form, col_preview = st.columns([1, 1], gap="medium")
+
+    with col_form:
         st.subheader("Hirer Details")
         cc1, cc2 = st.columns(2)
         default_c_no = build_default_contract_no(st.session_state.ocr_name, st.session_state.sel_reg)
         with cc1:
-            c_no, c_name, c_addr, c_post, c_dob = st.text_input("Contract Number", value=default_c_no), st.text_input("Full Name", value=st.session_state.ocr_name), st.text_area("Address", value=st.session_state.ocr_address), st.text_input("Postcode", value=st.session_state.ocr_postcode), st.text_input("Date of Birth (DD/MM/YYYY)", value=normalize_date(st.session_state.ocr_dob))
+            c_no = st.text_input("Contract Number", value=default_c_no, key="c_form_no")
+            c_name = st.text_input("Full Name", value=st.session_state.ocr_name, key="c_form_name")
+            c_addr = st.text_area("Address", value=st.session_state.ocr_address, key="c_form_addr")
+            c_post = st.text_input("Postcode", value=st.session_state.ocr_postcode, key="c_form_post")
+            c_dob = st.text_input("Date of Birth (DD/MM/YYYY)", value=normalize_date(st.session_state.ocr_dob), key="c_form_dob")
         with cc2:
-            c_date, c_lic, c_exp, c_auth, c_ph, c_em = st.date_input("Contract Date", get_uk_now().date(), format="DD/MM/YYYY", key="c_form_date"), st.text_input("Licence No", value=st.session_state.ocr_licence), st.text_input("Date of Expiry (DD/MM/YYYY)", value=normalize_date(st.session_state.ocr_expiry)), st.text_input("Issuing Authority", "DVLA"), st.text_input("Phone"), st.text_input("Email")
-        st.markdown("---"); pp1, pp2, pp3 = st.columns(3)
-        with pp1: c_rent = st.text_input("Rent (£/week)", "250/-")
-        with pp2: c_rate = st.text_input("Excess (pence/mile)", "20/-")
-        with pp3: c_dep = st.text_input("Deposit (£)", "500/-")
-        st.markdown("---"); pt1, pt2 = st.columns(2)
+            c_date = st.date_input("Contract Date", get_uk_now().date(), format="DD/MM/YYYY", key="c_form_date")
+            c_lic = st.text_input("Licence No", value=st.session_state.ocr_licence, key="c_form_lic")
+            c_exp = st.text_input("Date of Expiry (DD/MM/YYYY)", value=normalize_date(st.session_state.ocr_expiry), key="c_form_exp")
+            c_auth = st.text_input("Issuing Authority", "DVLA", key="c_form_auth")
+            c_ph = st.text_input("Phone", key="c_form_ph")
+            c_em = st.text_input("Email", key="c_form_em")
+
+        st.markdown("---")
+        pp1, pp2, pp3 = st.columns(3)
+        with pp1: c_rent = st.text_input("Rent (£/week)", "250/-", key="c_form_rent")
+        with pp2: c_rate = st.text_input("Excess (pence/mile)", "20/-", key="c_form_rate")
+        with pp3: c_dep = st.text_input("Deposit (£)", "500/-", key="c_form_dep")
+
+        st.markdown("---")
+        pt1, pt2 = st.columns(2)
         with pt1: c_st = st.date_input("Hire Start", get_uk_now().date(), format="DD/MM/YYYY", key="c_form_start")
         with pt2: c_ret = st.date_input("Expected Return", DEFAULT_HIRE_END_DATE, format="DD/MM/YYYY", key="c_form_return")
+
         tm1, tm2 = st.columns(2)
         with tm1: c_start_time = st.time_input("Time Car Given", get_uk_now().time().replace(second=0, microsecond=0), key="c_form_start_time")
         with tm2: c_return_time = st.time_input("Time Car Returned", get_uk_now().time().replace(second=0, microsecond=0), key="c_form_return_time")
-        st.markdown("---"); pv1, pv2, pv3 = st.columns(3)
-        with pv1: c_mk = st.text_input("Make", value=st.session_state.sel_make)
-        with pv2: c_rv = st.text_input("Reg", value=st.session_state.sel_reg)
-        with pv3: c_mv = st.text_input("Model", value=st.session_state.sel_model)
+
+        st.markdown("---")
+        pv1, pv2, pv3 = st.columns(3)
+        with pv1: c_mk = st.text_input("Make", value=st.session_state.sel_make, key="c_form_mk")
+        with pv2: c_rv = st.text_input("Reg", value=st.session_state.sel_reg, key="c_form_rv")
+        with pv3: c_mv = st.text_input("Model", value=st.session_state.sel_model, key="c_form_mv")
+
         st.markdown("---")
         sig_col1, sig_col2 = st.columns(2)
         hirer_sig_options = ["Scanned Licence Signature", "-- No Signature --"]
         with sig_col1:
-            c_hirer_sig = st.selectbox("✍️ Hirer Signature", hirer_sig_options)
+            c_hirer_sig = st.selectbox("Hirer Signature", hirer_sig_options, key="c_form_hirer_sig")
         with sig_col2:
-            c_sig = st.selectbox("✍️ Owner Signature", SIGNATURE_OPTIONS)
-        default_c_doc_name = build_default_doc_name("Contract", st.session_state.ocr_name, st.session_state.sel_reg, "Contract")
+            c_sig = st.selectbox("Owner Signature", SIGNATURE_OPTIONS, key="c_form_owner_sig")
+
+        default_c_doc_name = build_default_doc_name("Contract", c_name, c_rv, "Contract")
         c_doc_name = st.text_input("Document Name", default_c_doc_name, key="contract_document_name")
-        go_c = st.form_submit_button("🖨️ Generate 2-Page Contract PDF", type="primary")
-    if go_c:
-        expected_auto_contract_name = build_default_doc_name("Contract", c_name, c_rv, "Contract")
-        contract_clean_name = clean_document_name(c_doc_name, expected_auto_contract_name)
-        if contract_clean_name in ("Contract", "Contract Driver", "Driver") and c_name and clean_name(c_name).upper() != "DRIVER":
-            contract_clean_name = expected_auto_contract_name
-        hirer_sig_bytes = st.session_state.ocr_signature_bytes if c_hirer_sig == "Scanned Licence Signature" else None
-        st.session_state.pending_contract = {"contract_no": c_no.strip().upper() or "N/A", "date": c_date.strftime("%d/%m/%Y"), "driver_name": c_name.strip().upper(), "address": normalize_address(c_addr), "postcode": c_post.strip().upper(), "dob": c_dob.strip(), "license_no": c_lic.strip().upper(), "expiry_date": c_exp.strip(), "issuing_authority": c_auth.strip().upper(), "phone": c_ph.strip(), "email": c_em.strip().upper(), "rent": c_rent.strip(), "rate": c_rate.strip(), "deposit": c_dep.strip(), "start_date": c_st.strftime("%d/%m/%Y"), "expected_return": c_ret.strftime("%d/%m/%Y"), "start_time": c_start_time.strftime("%H:%M"), "return_time": c_return_time.strftime("%H:%M"), "registration": format_uk_reg(c_rv), "car_make": c_mk.strip().upper(), "car_model": c_mv.strip().upper(), "owner_signature": c_sig, "hirer_signature": hirer_sig_bytes}
-        st.session_state.contract_filename = contract_clean_name
-        st.rerun()
+
+        go_c = st.button("Generate 2-Page Contract PDF", key="go_c_btn", type="primary", use_container_width=True, icon=":material/print:")
+
+        if go_c:
+            expected_auto_contract_name = build_default_doc_name("Contract", c_name, c_rv, "Contract")
+            contract_clean_name = clean_document_name(c_doc_name, expected_auto_contract_name)
+            if contract_clean_name in ("Contract", "Contract Driver", "Driver") and c_name and clean_name(c_name).upper() != "DRIVER":
+                contract_clean_name = expected_auto_contract_name
+            hirer_sig_bytes = st.session_state.ocr_signature_bytes if c_hirer_sig == "Scanned Licence Signature" else None
+            st.session_state.pending_contract = {
+                "contract_no": c_no.strip().upper() or "N/A",
+                "date": c_date.strftime("%d/%m/%Y"),
+                "driver_name": c_name.strip().upper(),
+                "address": normalize_address(c_addr),
+                "postcode": c_post.strip().upper(),
+                "dob": c_dob.strip(),
+                "license_no": c_lic.strip().upper(),
+                "expiry_date": c_exp.strip(),
+                "issuing_authority": c_auth.strip().upper(),
+                "phone": c_ph.strip(),
+                "email": c_em.strip().upper(),
+                "rent": c_rent.strip(),
+                "rate": c_rate.strip(),
+                "deposit": c_dep.strip(),
+                "start_date": c_st.strftime("%d/%m/%Y"),
+                "expected_return": c_ret.strftime("%d/%m/%Y"),
+                "start_time": c_start_time.strftime("%H:%M"),
+                "return_time": c_return_time.strftime("%H:%M"),
+                "registration": format_uk_reg(c_rv),
+                "car_make": c_mk.strip().upper(),
+                "car_model": c_mv.strip().upper(),
+                "owner_signature": c_sig,
+                "hirer_signature": hirer_sig_bytes
+            }
+            st.session_state.contract_filename = contract_clean_name
+            st.rerun()
+
+    with col_preview:
+        st.subheader("Live Document Preview")
+        hirer_sig_preview = st.session_state.ocr_signature_bytes if c_hirer_sig == "Scanned Licence Signature" else None
+        preview_contract_data = {
+            "contract_no": c_no.strip().upper() if c_no else "N/A",
+            "date": c_date.strftime("%d/%m/%Y") if c_date else "",
+            "driver_name": (c_name or "").strip().upper(),
+            "address": normalize_address(c_addr or ""),
+            "postcode": (c_post or "").strip().upper(),
+            "dob": (c_dob or "").strip(),
+            "license_no": (c_lic or "").strip().upper(),
+            "expiry_date": (c_exp or "").strip(),
+            "issuing_authority": (c_auth or "").strip().upper(),
+            "phone": (c_ph or "").strip(),
+            "email": (c_em or "").strip().upper(),
+            "rent": (c_rent or "").strip(),
+            "rate": (c_rate or "").strip(),
+            "deposit": (c_dep or "").strip(),
+            "start_date": c_st.strftime("%d/%m/%Y") if c_st else "",
+            "expected_return": c_ret.strftime("%d/%m/%Y") if c_ret else "",
+            "start_time": c_start_time.strftime("%H:%M") if c_start_time else "",
+            "return_time": c_return_time.strftime("%H:%M") if c_return_time else "",
+            "registration": format_uk_reg(c_rv or ""),
+            "car_make": (c_mk or "").strip().upper(),
+            "car_model": (c_mv or "").strip().upper(),
+            "owner_signature": c_sig,
+            "hirer_signature": hirer_sig_preview
+        }
+        try:
+            live_contract_pdf = generate_contract(preview_contract_data)
+            contract_imgs = render_pdf_to_images(live_contract_pdf)
+            if contract_imgs:
+                for idx, img in enumerate(contract_imgs, 1):
+                    st.caption(f"Page {idx} of {len(contract_imgs)}")
+                    st.image(img, use_container_width=True)
+        except Exception as err:
+            st.caption(f"Preview calculation error: {err}")

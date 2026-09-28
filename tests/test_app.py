@@ -28,6 +28,7 @@ from streamlit_app import (
     FLEET_VEHICLES,
     download_from_supabase_storage,
     parse_licence,
+    render_pdf_to_images,
 )
 
 def test_jpg_licence_loading():
@@ -36,6 +37,17 @@ def test_jpg_licence_loading():
     im.save(img_buf, format="JPEG")
     img_buf.seek(0)
     img_buf.name = "licence.jpg"
+
+    loaded = load_uploaded_image(img_buf)
+    assert isinstance(loaded, Image.Image)
+    assert loaded.size == (300, 200)
+
+def test_webp_licence_loading():
+    img_buf = io.BytesIO()
+    im = Image.new("RGB", (300, 200), color="green")
+    im.save(img_buf, format="WEBP")
+    img_buf.seek(0)
+    img_buf.name = "licence.webp"
 
     loaded = load_uploaded_image(img_buf)
     assert isinstance(loaded, Image.Image)
@@ -208,17 +220,17 @@ def test_driver_name_extraction_formatting():
 
 def test_document_filename_formatting():
     doc_name = build_default_doc_name("Contract", "JOHN SMITH", "YF22UWM", "Contract")
-    assert doc_name == "Contract John Smith YF22UWM"
+    assert doc_name == "Contract - John Smith - YF22UWM"
 
     perm_name = build_default_doc_name("Permission", "JOHN SMITH", "YF22UWM", "Permission Letter")
-    assert perm_name == "Permission John Smith YF22UWM"
+    assert perm_name == "Permission - John Smith - YF22UWM"
 
 def test_no_duplicate_name_or_registration_in_filename():
     dup_doc_name = build_default_doc_name("Contract", "John Smith YF22UWM", "YF22UWM", "Contract")
-    assert dup_doc_name == "Contract John Smith YF22UWM"
+    assert dup_doc_name == "Contract - John Smith - YF22UWM"
 
-    dup_clean = clean_document_name("Contract John Smith YF22UWM John Smith YF22UWM", "Contract")
-    assert dup_clean == "Contract John Smith YF22UWM"
+    dup_clean = clean_document_name("Contract - John Smith - YF22UWM - John Smith - YF22UWM", "Contract")
+    assert dup_clean == "Contract - John Smith - YF22UWM"
 
 def test_dynamic_contract_number():
     c_no1 = build_default_contract_no("JOHN SMITH", "YF22UWM")
@@ -317,3 +329,51 @@ def test_audit_logs():
     assert latest["doc_name"] == test_doc
     assert latest["details"] == test_details
     assert latest["file_path"] == test_path
+
+def test_live_document_preview_rendering():
+    perm_data = {
+        "date": "10/06/2026",
+        "insurance_policy": "HAVFL-000211",
+        "registration": "MA16 BFZ",
+        "make_model": "MERCEDES-BENZ E220D",
+        "driver_name": "AREEB ANSARI",
+        "address": "123 TEST STREET, LONDON",
+        "license_no": "ANSAR901019A999",
+        "start_date": "10/06/2026",
+        "end_date": "27/11/2026"
+    }
+    pdf_bytes = generate_permission_letter(perm_data)
+    imgs = render_pdf_to_images(pdf_bytes)
+    assert len(imgs) == 1
+    assert isinstance(imgs[0], Image.Image)
+
+    contract_data = {
+        "contract_no": "1608/JOHN-SMITH/YF22UWM2026",
+        "date": "10/06/2026",
+        "driver_name": "JOHN SMITH",
+        "address": "123 TEST STREET, LONDON",
+        "postcode": "SW1A 1AA",
+        "dob": "01/01/1990",
+        "license_no": "SMITH901019A999",
+        "expiry_date": "01/01/2030",
+        "issuing_authority": "DVLA",
+        "phone": "07123456789",
+        "email": "TEST@EXAMPLE.COM",
+        "rent": "250/-",
+        "rate": "20/-",
+        "deposit": "500/-",
+        "start_date": "10/06/2026",
+        "expected_return": "27/11/2026",
+        "start_time": "10:00",
+        "return_time": "10:00",
+        "registration": "YF22 UWM",
+        "car_make": "MG",
+        "car_model": "5 EV",
+        "owner_signature": "-- No Signature --",
+        "hirer_signature": None,
+    }
+    c_bytes = generate_contract(contract_data)
+    c_imgs = render_pdf_to_images(c_bytes)
+    assert len(c_imgs) == 2
+    for img in c_imgs:
+        assert isinstance(img, Image.Image)
