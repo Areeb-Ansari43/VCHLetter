@@ -305,12 +305,38 @@ def _find_img(base_name):
                 return p
     return None
 
-# If you have a hosted URL for your logo, paste it here (e.g. from a GitHub
-# raw link or image host) and it will be used as the browser tab icon
-# regardless of what files happen to be deployed alongside this script.
 FAVICON_URL = "https://virtualcarhire.pages.dev/assets/favicon-32x32.png?v=3"
+SOCIAL_PREVIEW_IMG_URL = "https://virtualcarhire.pages.dev/assets/ab_workspace_social.png"
+PUBLIC_APP_URL = "https://vchletter.xubi.org"
 
 fav_path = FAVICON_URL or _find_img("Screenshot_2026-06-09_230035") or "🚗"
+
+def _inject_index_meta_tags():
+    try:
+        import streamlit
+        static_dir = os.path.join(os.path.dirname(streamlit.__file__), "static")
+        index_path = os.path.join(static_dir, "index.html")
+        if os.path.exists(index_path):
+            with open(index_path, "r", encoding="utf-8") as f:
+                content = f.read()
+            og_meta = (
+                '<meta property="og:title" content="FA-IBI Workspace" />\n'
+                '<meta property="og:description" content="FA-IBI Workspace — Create, manage and generate your documents in one place." />\n'
+                f'<meta property="og:image" content="{SOCIAL_PREVIEW_IMG_URL}" />\n'
+                f'<meta property="og:url" content="{PUBLIC_APP_URL}" />\n'
+                '<meta property="og:type" content="website" />\n'
+                '<meta name="twitter:card" content="summary_large_image" />\n'
+                '<meta name="twitter:title" content="FA-IBI Workspace" />\n'
+                '<meta name="twitter:description" content="FA-IBI Workspace — Create, manage and generate your documents in one place." />\n'
+                f'<meta name="twitter:image" content="{SOCIAL_PREVIEW_IMG_URL}" />\n'
+            )
+            content = content.replace("<head>", f"<head>\n{og_meta}")
+            with open(index_path, "w", encoding="utf-8") as f:
+                f.write(content)
+    except Exception:
+        pass
+
+_inject_index_meta_tags()
 
 # ─────────────────────────────────────────────
 #  STREAMLIT CONFIGURATION & BRAND HIDING
@@ -321,20 +347,8 @@ st.set_page_config(
     layout="wide"
 )
 
-# ─────────────────────────────────────────────
-#  BROWSER TAB TITLE — Streamlit appends " · Streamlit" to whatever
-#  page_title is set above; this forces the tab back to a clean title.
-# ─────────────────────────────────────────────
 import streamlit.components.v1 as components
 
-# ─────────────────────────────────────────────
-#  BROWSER TAB TITLE — Streamlit appends " · Streamlit" to whatever
-#  page_title is set above. st.markdown() never actually runs <script>
-#  tags (Streamlit strips script execution from injected HTML), which is
-#  why a markdown-based fix silently does nothing. components.html()
-#  renders in a real iframe that DOES execute scripts, so we reach up to
-#  the parent (top-level) document to force the tab title.
-# ─────────────────────────────────────────────
 components.html("""
 <script>
 (function() {
@@ -359,30 +373,16 @@ components.html("""
 </script>
 """, height=0, width=0)
 
-# ─────────────────────────────────────────────
-#  LINK-PREVIEW METADATA (best effort)
-#  NOTE: Slack/WhatsApp/Teams/etc. generate link previews by fetching the
-#  page's raw HTML with no JavaScript execution. Streamlit apps render
-#  their content client-side, so tags injected here (after the JS app
-#  boots) are usually invisible to those crawlers — this is a platform
-#  limitation, not something fixable from inside the Python script. The
-#  reliable fix is a small edge/proxy rule in front of your custom domain
-#  (e.g. a Cloudflare Worker) that serves a static HTML snippet with these
-#  tags to known bot user-agents while passing real visitors through to
-#  Streamlit. Happy to write that Worker script if xubi.org is on
-#  Cloudflare — just say the word. Leaving this block in in case your
-#  hosting setup does happen to expose it.
-# ─────────────────────────────────────────────
 st.markdown(f"""
 <meta property="og:title" content="FA-IBI Workspace" />
-<meta property="og:description" content="FA-IBI LTD private hire vehicle rental — driver licence scanning, permission letters, and hire contracts generated in one place." />
-<meta property="og:image" content="{FAVICON_URL}" />
-<meta property="og:url" content="https://vchletter.xubi.org" />
+<meta property="og:description" content="FA-IBI Workspace — Create, manage and generate your documents in one place." />
+<meta property="og:image" content="{SOCIAL_PREVIEW_IMG_URL}" />
+<meta property="og:url" content="{PUBLIC_APP_URL}" />
 <meta property="og:type" content="website" />
-<meta name="twitter:card" content="summary" />
+<meta name="twitter:card" content="summary_large_image" />
 <meta name="twitter:title" content="FA-IBI Workspace" />
-<meta name="twitter:description" content="FA-IBI LTD private hire vehicle rental — driver licence scanning, permission letters, and hire contracts generated in one place." />
-<meta name="twitter:image" content="{FAVICON_URL}" />
+<meta name="twitter:description" content="FA-IBI Workspace — Create, manage and generate your documents in one place." />
+<meta name="twitter:image" content="{SOCIAL_PREVIEW_IMG_URL}" />
 """, unsafe_allow_html=True)
 
 st.markdown("""
@@ -403,6 +403,22 @@ header {visibility: hidden;}
 
 .main-workspace-content, .audit-page-content, .licence-preview-card, .doc-preview-card {
     animation: faIbiFadeIn 0.22s ease-out forwards;
+}
+
+.licence-preview-card {
+    background-color: #1a1c23;
+    border: 1px solid #2e323e;
+    border-radius: 8px;
+    padding: 12px;
+    max-width: 420px;
+    margin-top: 8px;
+    margin-bottom: 8px;
+}
+.licence-preview-card img {
+    max-width: 100% !important;
+    max-height: 260px !important;
+    object-fit: contain !important;
+    border-radius: 4px;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -1090,6 +1106,9 @@ def parse_licence(raw: str) -> dict:
     return {"surname": surname, "forename": forename, "dob": dob, "expiry": expiry, "licence": licence, "address": addr_clean, "postcode": postcode}
 
 def _wrap_draw(c, text, x, y, max_width, font="Helvetica", size=11, leading=14):
+    text = str(text or "")
+    if not text:
+        return y
     c.setFont(font, size)
     for line in simpleSplit(text, font, size, max_width):
         c.drawString(x, y, line)
@@ -1098,6 +1117,10 @@ def _wrap_draw(c, text, x, y, max_width, font="Helvetica", size=11, leading=14):
 
 def _wrap_draw_bold_token(c, text, token, x, y, max_width, size=11, leading=14):
     """Wrap text while rendering one exact token in bold."""
+    text = str(text or "")
+    token = str(token or "")
+    if not text:
+        return y
     lines = simpleSplit(text, "Helvetica", size, max_width)
     for line in lines:
         token_start = line.find(token) if token else -1
@@ -1127,9 +1150,14 @@ def generate_permission_letter(data: dict) -> bytes:
     c = canvas.Canvas(buf, pagesize=letter, pageCompression=1)
     pw, ph = letter
     bg = _find_img("image_f4efbe"); sig = _find_img("signature")
-    if bg: c.drawImage(bg, 0, 0, width=pw, height=ph)
+    if not bg:
+        logging.warning("Permission letter template image 'image_f4efbe' was not found by _find_img.")
+    else:
+        c.drawImage(bg, 0, 0, width=pw, height=ph)
+
     c.setFont("Helvetica", 11)
-    c.drawRightString(pw - 54, 595, data["date"])
+    date_str = str(data.get("date", "") or "")
+    c.drawRightString(pw - 54, 595, date_str)
     c.setFont("Helvetica-Bold", 22)
     c.drawCentredString(pw / 2, 550, "PERMISSION LETTER")
 
@@ -1139,7 +1167,7 @@ def generate_permission_letter(data: dict) -> bytes:
     c.drawString(54, y, "To Whom It May Concern,")
     y -= 25
 
-    policy_number = str(data.get("insurance_policy", "")).strip().upper()
+    policy_number = str(data.get("insurance_policy", "") or "").strip().upper()
     confirm_text = (
         f"We confirm that the below vehicle can be used for the carriage of "
         f"passengers for hire and reward by prior appointments (private hire) "
@@ -1157,14 +1185,21 @@ def generate_permission_letter(data: dict) -> bytes:
     y -= 18
 
     c.setFont("Helvetica", 11)
-    for label, val in [("Vehicle Registration", data["registration"]), ("Make and Model", data["make_model"]), ("Driver Name", data["driver_name"]), ("Address", normalize_address(data["address"])), ("Driving Licence No", data["license_no"])]:
+    fields_list = [
+        ("Vehicle Registration", str(data.get("registration", "") or "")),
+        ("Make and Model", str(data.get("make_model", "") or "")),
+        ("Driver Name", str(data.get("driver_name", "") or "")),
+        ("Address", normalize_address(str(data.get("address", "") or ""))),
+        ("Driving Licence No", str(data.get("license_no", "") or "")),
+    ]
+    for label, val in fields_list:
         c.drawString(54, y, f"{label} :"); c.drawString(180, y, val)
         y -= 22
     y -= 18
 
-    c.drawString(54, y, "Hire start date. :"); c.drawString(160, y, data["start_date"])
+    c.drawString(54, y, "Hire start date. :"); c.drawString(160, y, str(data.get("start_date", "") or ""))
     y -= 15
-    c.drawString(54, y, "Hire end date    :"); c.drawString(160, y, data["end_date"])
+    c.drawString(54, y, "Hire end date    :"); c.drawString(160, y, str(data.get("end_date", "") or ""))
     y -= 25
 
     c.drawString(54, y, "Regards,")
@@ -1265,7 +1300,10 @@ SIGNATURE_PLACEMENT = {
 }
 
 def _draw_fit(c, text, x, y, base_size=8.8, max_width=None, font="Helvetica"):
-    text = str(text)
+    if text is None:
+        text = ""
+    else:
+        text = str(text)
     if not text:
         return
     size = base_size
@@ -1318,24 +1356,37 @@ def generate_contract(data: dict) -> bytes:
     cv = canvas.Canvas(buf, pagesize=letter, pageCompression=1)
     W, H = 612, 792
     bg1, bg2 = _find_img("1"), _find_img("2")
+    if not bg1:
+        logging.warning("Contract Page 1 template '1' was not found by _find_img.")
+    else:
+        cv.drawImage(bg1, 0, 0, width=W, height=H)
 
-    if bg1: cv.drawImage(bg1, 0, 0, width=W, height=H)
     cv.setFont("Helvetica-Bold", 8.8)
     for key, (x, y, size) in CONTRACT_PAGE1_FIELDS.items():
-        cv.setFont("Helvetica-Bold" if key in ("contract_no", "rent", "rate", "deposit", "car_make", "registration", "car_model") else "Helvetica", size)
-        value = normalize_address(data.get(key, "")) if key == "address" else data.get(key, "")
-        _draw_fit(cv, value, x, y, base_size=size, max_width=CONTRACT_FIELD_MAXW.get(key),
-                  font="Helvetica-Bold" if key in ("contract_no", "rent", "rate", "deposit", "car_make", "registration", "car_model") else "Helvetica")
-    _stamp_signature(cv, data.get("owner_signature", ""), page=1)
+        font_style = "Helvetica-Bold" if key in ("contract_no", "rent", "rate", "deposit", "car_make", "registration", "car_model") else "Helvetica"
+        raw_val = data.get(key, "")
+        if raw_val is None:
+            raw_val = ""
+        value = normalize_address(raw_val) if key == "address" else str(raw_val)
+        _draw_fit(cv, value, x, y, base_size=size, max_width=CONTRACT_FIELD_MAXW.get(key), font=font_style)
+
+    _stamp_signature(cv, str(data.get("owner_signature", "") or ""), page=1)
     if data.get("hirer_signature"):
         _stamp_hirer_signature(cv, data.get("hirer_signature"), spot={"x": 160, "y": 66, "width": 110, "height": 25})
     cv.showPage()
 
-    if bg2: cv.drawImage(bg2, 0, 0, width=W, height=H)
+    if not bg2:
+        logging.warning("Contract Page 2 template '2' was not found by _find_img.")
+    else:
+        cv.drawImage(bg2, 0, 0, width=W, height=H)
+
     for key, (x, y, size) in CONTRACT_PAGE2_FIELDS.items():
-        _draw_fit(cv, data.get(key, ""), x, y, base_size=size, max_width=CONTRACT_FIELD_MAXW.get(key),
-                  font="Helvetica-Bold")
-    _stamp_signature(cv, data.get("owner_signature", ""), page=2)
+        raw_val = data.get(key, "")
+        if raw_val is None:
+            raw_val = ""
+        _draw_fit(cv, str(raw_val), x, y, base_size=size, max_width=CONTRACT_FIELD_MAXW.get(key), font="Helvetica-Bold")
+
+    _stamp_signature(cv, str(data.get("owner_signature", "") or ""), page=2)
     if data.get("hirer_signature"):
         _stamp_hirer_signature(cv, data.get("hirer_signature"), spot={"x": 160, "y": 42, "width": 110, "height": 25})
 
@@ -1694,15 +1745,17 @@ with col_scan:
     if uploaded and uploaded.size <= MAX_UPLOAD_SIZE_BYTES:
         try:
             lic_preview_img = load_uploaded_image(uploaded)
-            st.image(lic_preview_img, caption=f"Uploaded Licence ({uploaded.name})", use_container_width=True)
+            st.markdown('<div class="licence-preview-card">', unsafe_allow_html=True)
+            st.image(lic_preview_img, caption=f"Uploaded Licence ({uploaded.name})", width=360)
+            st.markdown('</div>', unsafe_allow_html=True)
         except Exception as img_err:
             st.warning(f"Unable to render licence preview: {img_err}")
     else:
         st.markdown("""
-        <div style="background-color: #1a1c23; border: 1px dashed #3f4454; border-radius: 8px; padding: 24px; text-align: center; color: #9ca3af; margin-top: 8px;">
-            <div style="font-size: 24px; margin-bottom: 6px;">💳</div>
-            <div style="font-weight: 600; font-size: 14px; color: #d1d5db;">Licence Preview</div>
-            <div style="font-size: 12px; margin-top: 4px;">Upload a driver's licence to preview it here.</div>
+        <div class="licence-preview-card" style="border: 1px dashed #3f4454; padding: 18px; text-align: center; color: #9ca3af;">
+            <div style="font-size: 22px; margin-bottom: 4px;">💳</div>
+            <div style="font-weight: 600; font-size: 13px; color: #d1d5db;">Licence Preview</div>
+            <div style="font-size: 11px; margin-top: 2px;">Upload a driver's licence to preview it here.</div>
         </div>
         """, unsafe_allow_html=True)
 
@@ -1900,11 +1953,19 @@ with tab1:
                 for img in perm_imgs:
                     st.image(img, use_container_width=True)
             else:
-                logging.error("render_pdf_to_images returned empty image list for Permission Letter preview")
-                st.info("Live document preview is currently unavailable.")
+                tmpl_path = _find_img("image_f4efbe")
+                logging.error(
+                    "Permission Letter preview rendering failed: render_pdf_to_images returned 0 images. Template 'image_f4efbe' path: %s",
+                    tmpl_path
+                )
+                st.error("Live document preview rendering failed. Please check server logs.")
         except Exception as err:
-            logging.exception("Permission letter preview calculation error for data %s: %s", preview_perm_data, err)
-            st.caption(f"Preview calculation error: {err}")
+            tmpl_path = _find_img("image_f4efbe")
+            logging.exception(
+                "Permission Letter preview rendering error for template 'image_f4efbe' (path: %s) with data %s: %s",
+                tmpl_path, preview_perm_data, err
+            )
+            st.error(f"Permission Letter preview error: {err}")
 
 with tab2:
     with st.expander("Field positions off? Calibrate them"):
@@ -2056,8 +2117,18 @@ with tab2:
                     st.caption(f"Page {idx} of {len(contract_imgs)}")
                     st.image(img, use_container_width=True)
             else:
-                logging.error("render_pdf_to_images returned empty image list for Contract preview")
-                st.info("Live document preview is currently unavailable.")
+                tmpl1_path = _find_img("1")
+                tmpl2_path = _find_img("2")
+                logging.error(
+                    "Contract preview rendering failed: render_pdf_to_images returned 0 images. Templates '1' & '2' paths: page1=%s, page2=%s",
+                    tmpl1_path, tmpl2_path
+                )
+                st.error("Live document preview rendering failed. Please check server logs.")
         except Exception as err:
-            logging.exception("Contract preview calculation error for data %s: %s", preview_contract_data, err)
-            st.caption(f"Preview calculation error: {err}")
+            tmpl1_path = _find_img("1")
+            tmpl2_path = _find_img("2")
+            logging.exception(
+                "Contract preview rendering error for templates '1' & '2' (paths: page1=%s, page2=%s) with data %s: %s",
+                tmpl1_path, tmpl2_path, preview_contract_data, err
+            )
+            st.error(f"Contract preview error: {err}")
