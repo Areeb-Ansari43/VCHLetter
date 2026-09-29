@@ -320,20 +320,19 @@ def _inject_index_meta_tags():
             with open(index_path, "r", encoding="utf-8") as f:
                 content = f.read()
             og_meta = (
-                '<meta property="og:title" content="AB Workspace" />\n'
-                '<meta property="og:description" content="AB Workspace — Create, manage and generate your documents in one place." />\n'
+                '<meta property="og:title" content="FA-IBI Workspace" />\n'
+                '<meta property="og:description" content="FA-IBI Workspace — Create, manage and generate your documents in one place." />\n'
                 f'<meta property="og:image" content="{SOCIAL_PREVIEW_IMG_URL}" />\n'
                 f'<meta property="og:url" content="{PUBLIC_APP_URL}" />\n'
                 '<meta property="og:type" content="website" />\n'
                 '<meta name="twitter:card" content="summary_large_image" />\n'
-                '<meta name="twitter:title" content="AB Workspace" />\n'
-                '<meta name="twitter:description" content="AB Workspace — Create, manage and generate your documents in one place." />\n'
+                '<meta name="twitter:title" content="FA-IBI Workspace" />\n'
+                '<meta name="twitter:description" content="FA-IBI Workspace — Create, manage and generate your documents in one place." />\n'
                 f'<meta name="twitter:image" content="{SOCIAL_PREVIEW_IMG_URL}" />\n'
             )
-            if 'property="og:title"' not in content:
-                content = content.replace("<head>", f"<head>\n{og_meta}")
-                with open(index_path, "w", encoding="utf-8") as f:
-                    f.write(content)
+            content = content.replace("<head>", f"<head>\n{og_meta}")
+            with open(index_path, "w", encoding="utf-8") as f:
+                f.write(content)
     except Exception:
         pass
 
@@ -343,7 +342,7 @@ _inject_index_meta_tags()
 #  STREAMLIT CONFIGURATION & BRAND HIDING
 # ─────────────────────────────────────────────
 st.set_page_config(
-    page_title="AB Workspace",
+    page_title="FA-IBI Workspace",
     page_icon=fav_path,
     layout="wide"
 )
@@ -353,7 +352,7 @@ import streamlit.components.v1 as components
 components.html("""
 <script>
 (function() {
-    const desiredTitle = "AB Workspace";
+    const desiredTitle = "FA-IBI Workspace";
     try {
         const pDoc = window.parent.document;
         if (pDoc && pDoc.title !== desiredTitle) {
@@ -375,14 +374,14 @@ components.html("""
 """, height=0, width=0)
 
 st.markdown(f"""
-<meta property="og:title" content="AB Workspace" />
-<meta property="og:description" content="AB Workspace — Create, manage and generate your documents in one place." />
+<meta property="og:title" content="FA-IBI Workspace" />
+<meta property="og:description" content="FA-IBI Workspace — Create, manage and generate your documents in one place." />
 <meta property="og:image" content="{SOCIAL_PREVIEW_IMG_URL}" />
 <meta property="og:url" content="{PUBLIC_APP_URL}" />
 <meta property="og:type" content="website" />
 <meta name="twitter:card" content="summary_large_image" />
-<meta name="twitter:title" content="AB Workspace" />
-<meta name="twitter:description" content="AB Workspace — Create, manage and generate your documents in one place." />
+<meta name="twitter:title" content="FA-IBI Workspace" />
+<meta name="twitter:description" content="FA-IBI Workspace — Create, manage and generate your documents in one place." />
 <meta name="twitter:image" content="{SOCIAL_PREVIEW_IMG_URL}" />
 """, unsafe_allow_html=True)
 
@@ -1484,7 +1483,7 @@ with nav_col1:
     if st.session_state.current_page == "audit":
         st.title("System Audit Logs")
     else:
-        st.title("AB Workspace")
+        st.title("FA-IBI Workspace")
 
 with nav_col2:
     btn_c1, btn_c2 = st.columns(2)

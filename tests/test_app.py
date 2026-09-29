@@ -618,13 +618,13 @@ def test_ab_workspace_social_image_and_og_metadata():
     with open(streamlit_app.__file__, "r", encoding="utf-8") as f:
         code = f.read()
 
-    assert 'og:title" content="AB Workspace"' in code
-    assert 'og:description" content="AB Workspace — Create, manage and generate your documents in one place."' in code
+    assert 'og:title" content="FA-IBI Workspace"' in code
+    assert 'og:description" content="FA-IBI Workspace — Create, manage and generate your documents in one place."' in code
     assert 'og:image"' in code
     assert 'og:url"' in code
     assert 'https://vchletter.xubi.org' in code
     assert 'twitter:card" content="summary_large_image"' in code
-    assert 'twitter:title" content="AB Workspace"' in code
+    assert 'twitter:title" content="FA-IBI Workspace"' in code
 
 def test_licence_preview_card_bounds_and_aspect_ratio():
     import streamlit_app
