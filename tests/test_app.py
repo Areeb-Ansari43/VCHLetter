@@ -605,3 +605,51 @@ def test_css_transitions_and_reduced_motion():
         content = f.read()
     assert "@keyframes faIbiFadeIn" in content
     assert "@media (prefers-reduced-motion: reduce)" in content
+
+def test_ab_workspace_social_image_and_og_metadata():
+    import streamlit_app
+    # Verify 1200x630 public social image asset
+    social_img_path = os.path.join(os.path.dirname(streamlit_app.__file__), "ab_workspace_social.png")
+    assert os.path.exists(social_img_path)
+    with Image.open(social_img_path) as im:
+        assert im.size == (1200, 630)
+
+    # Verify Open Graph and Twitter metadata in app code
+    with open(streamlit_app.__file__, "r", encoding="utf-8") as f:
+        code = f.read()
+
+    assert 'og:title" content="AB Workspace"' in code
+    assert 'og:description" content="AB Workspace — Create, manage and generate your documents in one place."' in code
+    assert 'og:image"' in code
+    assert 'og:url"' in code
+    assert 'https://vchletter.xubi.org' in code
+    assert 'twitter:card" content="summary_large_image"' in code
+    assert 'twitter:title" content="AB Workspace"' in code
+
+def test_licence_preview_card_bounds_and_aspect_ratio():
+    import streamlit_app
+    with open(streamlit_app.__file__, "r", encoding="utf-8") as f:
+        code = f.read()
+
+    # Verify licence preview container class and styling
+    assert ".licence-preview-card" in code
+    assert "max-width: 420px;" in code
+    assert "object-fit: contain !important;" in code
+    assert "width=360" in code
+
+    # Test aspect ratio preservation for JPG landscape and portrait images
+    img_land = Image.new("RGB", (800, 500), color="blue")
+    buf_land = io.BytesIO()
+    img_land.save(buf_land, format="JPEG")
+    buf_land.seek(0)
+    buf_land.name = "landscape.jpg"
+    loaded_land = load_uploaded_image(buf_land)
+    assert loaded_land.size[0] > loaded_land.size[1]  # Aspect ratio preserved landscape
+
+    img_port = Image.new("RGB", (500, 800), color="green")
+    buf_port = io.BytesIO()
+    img_port.save(buf_port, format="JPEG")
+    buf_port.seek(0)
+    buf_port.name = "portrait.jpg"
+    loaded_port = load_uploaded_image(buf_port)
+    assert loaded_port.size[1] > loaded_port.size[0]  # Aspect ratio preserved portrait
