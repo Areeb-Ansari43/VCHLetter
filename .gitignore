@@ -1,3 +1,5 @@
 __pycache__/
 src/audit_logs.json
 .streamlit/secrets.toml
+.auth_store.json
+src/.auth_store.json

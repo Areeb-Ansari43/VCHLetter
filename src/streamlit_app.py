@@ -19,11 +19,6 @@ except ImportError:
     cv2 = None
 
 try:
-    import extra_streamlit_components as stx
-except ImportError:
-    stx = None
-
-try:
     from azure.core.credentials import AzureKeyCredential
     from azure.ai.documentintelligence import DocumentIntelligenceClient
 except ImportError:
@@ -55,7 +50,7 @@ except ImportError:
     build = None
     MediaIoBaseUpload = None
 
-import base64, json, urllib.parse, hashlib, threading, zipfile, functools
+import base64, json, urllib.parse, hashlib, threading, zipfile, functools, secrets, time as _time_mod
 from reportlab.lib.utils import simpleSplit
 
 SRC_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -477,6 +472,7 @@ hr { margin: 0.4rem 0 !important; }
     display: flex; align-items: center; justify-content: center;
     font-weight: 800; color: #fff; font-size: 15px; letter-spacing: .5px;
 }
+.fa-brand-mark { display:flex; align-items:center; }
 .fa-brand-title { font-size: 1.35rem; font-weight: 750; color: #f5f5f5; line-height: 1.1; }
 .fa-brand-sub { font-size: 0.78rem; color: #9ca3af; }
 
@@ -629,38 +625,56 @@ def flush_notices():
         notify(message, kind)
 
 # ─────────────────────────────────────────────
-#  REAL COOKIE-BASED AUTH (no URL params, no full-page reload hacks)
+#  LOGIN SESSION (email + password + email code, remembered by a signed cookie)
 # ─────────────────────────────────────────────
-AUTH_COOKIE_NAME = "fa_ibi_auth"
-AUTH_COOKIE_DAYS = 30
-
-if stx is not None:
-    try:
-        cookie_manager = stx.CookieManager()
-    except Exception:
-        cookie_manager = None
-else:
-    cookie_manager = None
-
-if cookie_manager is None and stx is None:
-    st.warning(
-        "⚠️ `extra-streamlit-components` isn't installed, so login can't persist "
-        "across refreshes. Add `extra-streamlit-components` to requirements.txt "
-        "and redeploy to fix this.",
-        icon="⚠️",
-    )
+import fa_auth
 
 if "authenticated" not in st.session_state:
     st.session_state.authenticated = False
 
-if not st.session_state.authenticated and cookie_manager is not None:
+def get_auth_store() -> "fa_auth.AuthStore":
+    return fa_auth.AuthStore(get_supabase_client())
+
+def _request_cookies() -> dict:
     try:
-        cookies = cookie_manager.get_all()
-        if isinstance(cookies, dict) and cookies.get(AUTH_COOKIE_NAME) == "true":
-            st.session_state.authenticated = True
-            st.rerun()
+        return dict(st.context.cookies or {})
     except Exception:
-        pass
+        return {}
+
+def _emit_cookie_script(value: str | None, days: int = fa_auth.REMEMBER_DAYS):
+    """Write (or delete) the remember-me cookie in the browser."""
+    name = fa_auth.REMEMBER_COOKIE
+    if value:
+        js_value = json.dumps(value)
+        expiry = f"new Date(Date.now() + {int(days)} * 864e5).toUTCString()"
+    else:
+        js_value = '""'
+        expiry = '"Thu, 01 Jan 1970 00:00:00 GMT"'
+    st.html(f"""
+    <script>
+    (function () {{
+        var secure = location.protocol === "https:";
+        var attrs = "; expires=" + {expiry} + "; path=/" + (secure ? "; SameSite=None; Secure" : "; SameSite=Lax");
+        try {{ document.cookie = "{name}=" + encodeURIComponent({js_value}) + attrs; }} catch (e) {{}}
+    }})();
+    </script>""", unsafe_allow_javascript=True)
+
+# Restore a remembered login straight from the browser's cookie (no extra reruns).
+if not st.session_state.authenticated and not st.session_state.get("_logged_out"):
+    _token = _request_cookies().get(fa_auth.REMEMBER_COOKIE)
+    if _token:
+        try:
+            _email = fa_auth.read_session_token(urllib.parse.unquote(_token), get_auth_store())
+        except Exception:
+            _email = None
+        if _email:
+            st.session_state.authenticated = True
+            st.session_state.user_email = _email
+
+if st.session_state.authenticated and st.session_state.get("_set_cookie"):
+    _emit_cookie_script(st.session_state.pop("_set_cookie"))
+if not st.session_state.authenticated and st.session_state.pop("_clear_cookie", False):
+    _emit_cookie_script(None)
 
 
 # Source: "VCH_Car_Fleet_01092026.numbers" (Sheet 1). Rent is the weekly hire
@@ -1933,38 +1947,371 @@ def cached_signed_links(paths: tuple) -> dict:
     return create_signed_pdf_links(paths, expires_in=3600)
 
 # ─────────────────────────────────────────────
-#  GATEKEEPER SECURITY PORTAL
+#  BRAND LOGO
 # ─────────────────────────────────────────────
-if not st.session_state.authenticated:
-    _, login_col, _ = st.columns([1, 1.3, 1])
-    with login_col:
+_LOGO_GRADIENT = """
+<linearGradient id="{gid}" gradientUnits="userSpaceOnUse" x1="{x1}" y1="0" x2="{x2}" y2="0">
+  <stop offset="0" stop-color="#FF7A59"/><stop offset="1" stop-color="#FFB547"/>
+</linearGradient>"""
+
+_CAR_PATHS = """
+<path d="M120 22 C124 26 130 27 136 27 C162 15 192 5 224 7 C248 8 260 21 276 27 C302 31 322 31 338 35 C348 39 350 47 348 55"/>
+<path d="M120 22 C115 30 121 35 124 39 C119 45 121 53 129 55"/>
+<circle cx="148" cy="57" r="13"/><circle cx="296" cy="57" r="13"/>
+<line x1="174" y1="57" x2="268" y2="57"/>"""
+
+def _car_svg_uri(stroke: float = 5.5, animate: bool = False) -> str:
+    """Car outline as a data-URI SVG (Streamlit strips inline <svg>)."""
+    paths = _CAR_PATHS
+    style = ""
+    if animate:
+        paths = (paths.replace("<path ", '<path class="d" pathLength="1" ')
+                      .replace("<circle ", '<circle class="d w" pathLength="1" ')
+                      .replace("<line ", '<line class="d" pathLength="1" '))
+        style = ("<style>.d{stroke-dasharray:1;stroke-dashoffset:1;animation:k 1.6s cubic-bezier(.65,0,.35,1) .15s forwards}"
+                 ".w{animation-duration:.9s;animation-delay:1.05s}@keyframes k{to{stroke-dashoffset:0}}"
+                 "@media (prefers-reduced-motion:reduce){.d{animation:none;stroke-dashoffset:0}}</style>")
+    svg = (f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="104 0 262 76">{style}'
+           f'<defs>{_LOGO_GRADIENT.format(gid="g", x1=110, x2=360)}</defs>'
+           f'<g fill="none" stroke="url(#g)" stroke-width="{stroke}" stroke-linecap="round" stroke-linejoin="round">{paths}</g></svg>')
+    return "data:image/svg+xml;base64," + base64.b64encode(svg.encode()).decode()
+
+def vch_logo_svg(width: int = 300, animate: bool = False) -> str:
+    """Virtual Car Hire logo. A real image at src/vch_logo.png (or .svg) wins if present."""
+    for ext, mime in ((".png", "image/png"), (".svg", "image/svg+xml"), (".jpg", "image/jpeg")):
+        path = os.path.join(SRC_DIR, "vch_logo" + ext)
+        if os.path.exists(path):
+            with open(path, "rb") as f:
+                b64 = base64.b64encode(f.read()).decode()
+            return (f'<img class="{"lp-fade" if animate else ""}" src="data:{mime};base64,{b64}" alt="Virtual Car Hire" '
+                    f'style="width:{width}px;max-width:100%;height:auto">')
+    return (f'<div class="vch-logo" style="width:{width}px;max-width:100%">'
+            f'<img class="vch-car" src="{_car_svg_uri(5.5, animate)}" alt="">'
+            f'<div class="vch-word {"lp-word" if animate else ""}">Virtual Car Hire</div></div>')
+
+def vch_mark_svg(size: int = 40) -> str:
+    """Compact car-only mark for the workspace header."""
+    return f'<img src="{_car_svg_uri(7)}" alt="" style="height:{size}px;width:auto;display:block">'
+
+# ─────────────────────────────────────────────
+#  LOGIN / SETUP / 2FA PAGES
+# ─────────────────────────────────────────────
+LOGIN_CSS = """
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Quicksand:wght@500;600&family=Inter:wght@400;500;600&display=swap');
+
+.stApp { background: #0d0f14 !important; }
+[data-testid="stMainBlockContainer"], .block-container { max-width: 1060px !important; }
+
+/* ── left brand panel ── */
+.vch-logo { text-align: center; }
+.vch-car { width: 62%; height: auto; display: block; margin: 0 auto; }
+.vch-word { font-family: 'Quicksand', 'Nunito', system-ui, sans-serif; font-weight: 500; font-size: 2.55rem; line-height: 1.15;
+            background: linear-gradient(90deg, #FF7A59, #FFB547); -webkit-background-clip: text; background-clip: text;
+            color: transparent; white-space: nowrap; margin-top: 4px; }
+.lp-brand { padding: 9vh 8px 0 4px; font-family: Inter, system-ui, sans-serif; text-align: center; }
+.lp-brand .vch-logo { margin: 0 auto; }
+.lp-copy p { margin: 0 auto !important; }
+.lp-logo { margin-left: 0; }
+.lp-draw { stroke-dasharray: 1; stroke-dashoffset: 1; animation: lpDraw 1.6s cubic-bezier(.65,0,.35,1) .15s forwards; }
+.lp-wheel { animation-duration: .9s; animation-delay: 1.1s; }
+.lp-word { opacity: 0; animation: lpFade .8s ease 1.2s forwards; }
+.lp-fade { opacity: 0; animation: lpFade .7s ease .1s forwards; }
+.lp-road { position: relative; height: 2px; width: 220px; margin: 6px auto 0 auto; overflow: hidden; opacity: 0;
+           animation: lpFade .6s ease 1.4s forwards; }
+.lp-road::before { content: ""; position: absolute; inset: 0; width: 200%;
+    background: repeating-linear-gradient(90deg, #3a3f4c 0 18px, transparent 18px 34px);
+    animation: lpRoad 1.1s linear infinite; }
+.lp-copy { margin-top: 34px; opacity: 0; animation: lpUp .7s ease 1.3s forwards; }
+.lp-copy h1 { font-family: Inter, system-ui, sans-serif !important; font-size: 1.55rem !important; font-weight: 600 !important;
+              color: #f3f4f6 !important; letter-spacing: -.01em; margin: 0 0 8px 0 !important; padding: 0 !important; }
+.lp-copy p { color: #9aa1ad; font-size: .95rem; line-height: 1.55; margin: 0; max-width: 360px; }
+.lp-foot { margin-top: 40px; color: #5c6370; font-size: .78rem; opacity: 0; animation: lpFade .8s ease 1.6s forwards; }
+
+/* ── form card ── */
+[data-testid="stVerticalBlock"]:has(> [data-testid="stElementContainer"] .lp-form-head) {
+    animation: lpUp .6s cubic-bezier(.2,.7,.2,1) .25s both;
+}
+[data-testid="stVerticalBlock"]:has(> [data-testid="stElementContainer"] .lp-form-head) {
+    background: #14171e; border: 1px solid #232733 !important; border-radius: 16px !important;
+    box-shadow: 0 1px 0 rgba(255,255,255,.03) inset, 0 24px 60px -30px rgba(0,0,0,.8);
+    padding: 22px 22px 16px 22px !important; margin-top: 7vh;
+}
+.lp-form-head { font-family: Inter, system-ui, sans-serif; margin: 2px 0 6px 0; }
+.lp-form-head .t { font-size: 1.2rem; font-weight: 600; color: #f3f4f6; }
+.lp-form-head .s { font-size: .86rem; color: #8b929e; margin-top: 3px; line-height: 1.45; }
+.lp-hint { background:#1a1d25; border:1px solid #272b36; border-radius:10px; padding:10px 12px; color:#c9ced6;
+           font-size:.86rem; line-height: 1.45; animation: lpFade .4s ease both; }
+.lp-hint b { color:#ffb547; font-weight: 600; }
+
+[data-testid="stForm"] { border: none !important; padding: 0 !important; }
+.stTextInput input { transition: border-color .15s ease, box-shadow .15s ease; }
+.stTextInput div[data-baseweb="input"]:focus-within { border-color: #ff8a5c !important; box-shadow: 0 0 0 3px rgba(255,138,92,.15); }
+[data-testid="stBaseButton-primaryFormSubmit"], [data-testid="stBaseButton-primary"] {
+    background: #ff7a59 !important; border-color: #ff7a59 !important; color: #1a1006 !important; font-weight: 600 !important;
+    transition: transform .12s ease, background .15s ease, box-shadow .15s ease;
+}
+[data-testid="stBaseButton-primaryFormSubmit"]:hover, [data-testid="stBaseButton-primary"]:hover {
+    background: #ff8f6b !important; transform: translateY(-1px); box-shadow: 0 8px 20px -10px rgba(255,122,89,.8);
+}
+[data-testid="stBaseButton-primaryFormSubmit"]:active { transform: translateY(0); }
+div[data-testid="stTextInput"] input[aria-label="6-digit code"] {
+    letter-spacing: .55em; font-size: 1.4rem !important; text-align: center; font-weight: 600;
+}
+.lp-small { color: #6b7280; font-size: .76rem; text-align: center; margin-top: 2px; }
+
+@keyframes lpDraw { to { stroke-dashoffset: 0; } }
+@keyframes lpFade { to { opacity: 1; } }
+@keyframes lpUp { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+@keyframes lpRoad { to { transform: translateX(-34px); } }
+
+@media (max-width: 640px) {
+    .lp-brand { padding: 2vh 0 0 0; text-align: center; }
+    .lp-logo { margin-left: 0; }
+    .lp-road { margin: 4px auto 0 auto; width: 170px; }
+    .lp-logo .vch-logo { width: 230px !important; margin: 0 auto; }
+    .vch-word { font-size: 1.95rem; }
+    .lp-copy { margin-top: 10px; }
+    .lp-copy h1 { font-size: 1.2rem !important; }
+    .lp-copy p, .lp-foot { display: none; }
+    [data-testid="stVerticalBlock"]:has(> [data-testid="stElementContainer"] .lp-form-head) { margin-top: 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+    .lp-draw, .lp-word, .lp-fade, .lp-road, .lp-road::before, .lp-copy, .lp-foot,
+    [data-testid="stVerticalBlock"]:has(> [data-testid="stElementContainer"] .lp-form-head) {
+        animation: none !important; opacity: 1 !important; stroke-dashoffset: 0 !important; transform: none !important;
+    }
+}
+</style>"""
+
+def _auth_secrets():
+    return get_secret("RESEND_API_KEY", ""), get_secret("RESEND_FROM", "FA-IBI Workspace <onboarding@resend.dev>")
+
+def _complete_login(email: str, remember: bool, how: str):
+    store = get_auth_store()
+    st.session_state.authenticated = True
+    st.session_state.user_email = email
+    st.session_state.pop("_logged_out", None)
+    for k in ("_auth_code", "_auth_pending", "auth_view", "_login_fails"):
+        st.session_state.pop(k, None)
+    if remember:
+        user = store.get_user(email) or {}
+        st.session_state["_set_cookie"] = fa_auth.make_session_token(email, user.get("password_hash", ""), store.session_secret())
+    add_audit_log("Signed In", details=f"{email} · {how}{' · remembered 30 days' if remember else ''}")
+    queue_notice("Welcome back!" if how != "account created" else "Your account is ready — you're signed in.", "success")
+    st.rerun()
+
+def _send_code(email: str, purpose: str) -> bool:
+    rec = st.session_state.get("_auth_code")
+    if rec and rec.get("email") == fa_auth.normalize_email(email) and rec.get("purpose") == purpose \
+            and _time_mod.time() - rec.get("sent_at", 0) < fa_auth.RESEND_COOLDOWN_SECONDS:
+        wait = int(fa_auth.RESEND_COOLDOWN_SECONDS - (_time_mod.time() - rec.get("sent_at", 0)))
+        notify(f"Please wait {wait}s before sending another code.", "info")
+        return False
+    api_key, sender = _auth_secrets()
+    code = fa_auth.new_code()
+    with st.spinner("Sending code…"):
+        ok, err = fa_auth.send_code_email(api_key, sender, email, code, purpose)
+    if not ok:
+        st.session_state["_auth_error"] = err
+        return False
+    st.session_state["_auth_code"] = fa_auth.code_record(code, email, purpose)
+    add_audit_log("Email Code Sent", details=f"{fa_auth.normalize_email(email)} · {purpose}")
+    return True
+
+def _go(view: str):
+    st.session_state.auth_view = view
+    st.session_state.pop("_auth_error", None)
+
+def _show_auth_error():
+    err = st.session_state.pop("_auth_error", None)
+    if err:
+        st.error(err, icon=":material/error:")
+
+def render_login_page():
+    st.html(LOGIN_CSS)
+    store = get_auth_store()
+    try:
+        has_account = store.has_users()
+    except Exception:
+        has_account = False
+    resend_ready = bool(_auth_secrets()[0])
+    view = st.session_state.get("auth_view") or ("login" if has_account else "setup")
+    if not has_account and view in ("login", "forgot", "reset"):
+        view = "setup"
+
+    brand_col, col = st.columns([1.1, 1], gap="large")
+    with brand_col:
+        st.html(f"""
+        <div class="lp-brand">
+          <div class="lp-logo">{vch_logo_svg(330, animate=True)}</div>
+          <div class="lp-road"></div>
+          <div class="lp-copy">
+            <h1>FA-IBI Workspace</h1>
+            <p>Permission letters and hire contracts for the Virtual Car Hire fleet.</p>
+          </div>
+          <div class="lp-foot">FA-IBI LTD · 50 Salisbury Road, Hounslow</div>
+        </div>""")
+    with col:
         with st.container(border=True):
-            st.html("""
-            <div class="fa-brand" style="margin-bottom:6px">
-              <div class="fa-brand-logo">FA</div>
-              <div><div class="fa-brand-title">FA-IBI Workspace</div>
-              <div class="fa-brand-sub">System Security Verification</div></div>
-            </div>""")
-            with st.form("login_form", border=False):
-                code = st.text_input("Access PIN", type="password", placeholder="Enter key…")
-                submitted = st.form_submit_button("Verify Key", icon=":material/lock_open:", type="primary", width="stretch")
-            if submitted:
-                if code == get_secret("ACCESS_KEY", ""):
-                    st.session_state.authenticated = True
-                    add_audit_log("Verification PIN Entered", details="Successful Verification PIN Entry")
-                    if cookie_manager is not None:
-                        try:
-                            cookie_manager.set(
-                                AUTH_COOKIE_NAME, "true",
-                                expires_at=datetime.now() + timedelta(days=AUTH_COOKIE_DAYS),
-                                key="set_auth_cookie",
-                            )
-                        except Exception:
-                            pass
-                    st.rerun()
-                else:
-                    add_audit_log("Verification PIN Entered", details="Failed Verification PIN Entry")
-                    notify("Invalid Security Verification Pin Code", "error")
+            # ── first-time setup ──
+            if view == "setup":
+                st.html('<div class="lp-form-head"><div class="t">Create your login</div>'
+                        '<div class="s">This only happens once. Pick the email and password you\'ll use from now on.</div></div>')
+                _show_auth_error()
+                setup_key_secret = get_secret("SETUP_KEY", "") or get_secret("ACCESS_KEY", "")
+                with st.form("setup_form", border=False):
+                    key = st.text_input("Setup key", type="password", placeholder="Your current access PIN",
+                                        help="The ACCESS_KEY (or SETUP_KEY) from the app secrets. It stops anyone else claiming the account.")
+                    email = st.text_input("Email", placeholder="you@example.com", autocomplete="email")
+                    pw = st.text_input("New password", type="password", autocomplete="new-password")
+                    pw2 = st.text_input("Confirm password", type="password", autocomplete="new-password")
+                    remember = st.checkbox("Remember this device", value=True)
+                    go = st.form_submit_button("Create login", type="primary", width="stretch")
+                if go:
+                    problems = fa_auth.password_problems(pw, pw2)
+                    if not setup_key_secret:
+                        st.error("Add an ACCESS_KEY or SETUP_KEY to the app secrets first.")
+                    elif not hmac_compare(key, setup_key_secret):
+                        add_audit_log("Sign-in Failed", details="Wrong setup key")
+                        st.error("That setup key isn't right.")
+                    elif not fa_auth.valid_email(email):
+                        st.error("Please enter a valid email address.")
+                    elif problems:
+                        st.error("Your password needs " + ", ".join(problems) + ".")
+                    elif resend_ready:
+                        st.session_state["_auth_pending"] = {"email": fa_auth.normalize_email(email), "hash": fa_auth.hash_password(pw),
+                                                              "remember": remember, "purpose": "setup"}
+                        if _send_code(email, "setup"):
+                            _go("verify"); st.rerun()
+                        else:
+                            st.rerun()
+                    else:
+                        if store.set_password(email, pw):
+                            add_audit_log("Account Created", details=f"{fa_auth.normalize_email(email)} · email 2FA not configured")
+                            _complete_login(fa_auth.normalize_email(email), remember, "account created")
+                        else:
+                            st.error("Couldn't save the account. Check the Supabase settings.")
+                if not resend_ready:
+                    st.caption("Email codes switch on once RESEND_API_KEY is added to the app secrets.")
+
+            # ── sign in ──
+            elif view == "login":
+                st.html('<div class="lp-form-head"><div class="t">Sign in</div>'
+                        '<div class="s">Use your work email and password.</div></div>')
+                _show_auth_error()
+                fails = st.session_state.get("_login_fails", [])
+                fails = [t for t in fails if _time_mod.time() - t < 300]
+                locked = len(fails) >= 5
+                with st.form("login_form", border=False):
+                    email = st.text_input("Email", placeholder="you@example.com", autocomplete="email")
+                    pw = st.text_input("Password", type="password", autocomplete="current-password")
+                    remember = st.checkbox("Remember this device", value=True)
+                    go = st.form_submit_button("Sign in", type="primary", width="stretch", disabled=locked)
+                if locked:
+                    st.warning("Too many attempts — please wait 5 minutes.", icon=":material/timer:")
+                if go and not locked:
+                    user = store.get_user(email)
+                    if user and fa_auth.verify_password(pw, user.get("password_hash", "")):
+                        if resend_ready:
+                            st.session_state["_auth_pending"] = {"email": fa_auth.normalize_email(email), "remember": remember, "purpose": "login"}
+                            if _send_code(email, "login"):
+                                _go("verify")
+                            st.rerun()
+                        else:
+                            _complete_login(fa_auth.normalize_email(email), remember, "password")
+                    else:
+                        _time_mod.sleep(0.6)
+                        fails.append(_time_mod.time())
+                        add_audit_log("Sign-in Failed", details=f"{fa_auth.normalize_email(email) or 'no email'} · wrong email or password")
+                        st.error("Wrong email or password.")
+                st.session_state["_login_fails"] = fails
+                st.button("Forgot password?", type="tertiary", on_click=_go, args=("forgot",), key="forgot_link")
+
+            # ── enter emailed code ──
+            elif view == "verify":
+                pending = st.session_state.get("_auth_pending") or {}
+                rec = st.session_state.get("_auth_code")
+                if not pending or not rec:
+                    _go("login" if has_account else "setup"); st.rerun()
+                st.html(f'<div class="lp-form-head"><div class="t">Check your inbox</div></div>'
+                        f'<div class="lp-hint">We\'ve emailed a 6-digit code to <b>{pending.get("email", "")}</b>. '
+                        f'It\'s valid for 10 minutes.</div>')
+                _show_auth_error()
+                with st.form("code_form", border=False):
+                    code = st.text_input("6-digit code", max_chars=7, placeholder="••••••", autocomplete="one-time-code")
+                    extra = {}
+                    if pending.get("purpose") == "reset":
+                        extra["pw"] = st.text_input("New password", type="password", autocomplete="new-password")
+                        extra["pw2"] = st.text_input("Confirm new password", type="password", autocomplete="new-password")
+                    go = st.form_submit_button("Continue", type="primary", width="stretch")
+                if go:
+                    problems = fa_auth.password_problems(extra["pw"], extra["pw2"]) if "pw" in extra else []
+                    if problems:
+                        st.error("Your password needs " + ", ".join(problems) + ".")
+                    else:
+                        ok, msg = fa_auth.check_code(rec, code)
+                        if not ok:
+                            add_audit_log("Sign-in Failed", details=f"{pending.get('email')} · {msg}")
+                            st.error(msg)
+                        else:
+                            email, purpose = pending["email"], pending.get("purpose")
+                            if purpose == "setup":
+                                data = store.load()
+                                data["users"][email] = {"password_hash": pending["hash"], "created_at": int(_time_mod.time()), "updated_at": int(_time_mod.time())}
+                                data.setdefault("session_secret", secrets.token_hex(32))
+                                if store.save(data):
+                                    add_audit_log("Account Created", details=email)
+                                    _complete_login(email, pending.get("remember", True), "account created")
+                                else:
+                                    st.error("Couldn't save the account. Check the Supabase settings.")
+                            elif purpose == "reset":
+                                if store.set_password(email, extra["pw"]):
+                                    add_audit_log("Password Reset", details=email)
+                                    _complete_login(email, True, "password reset")
+                                else:
+                                    st.error("Couldn't save the new password.")
+                            else:
+                                _complete_login(email, pending.get("remember", True), "password + email code")
+                b1, b2 = st.columns(2)
+                with b1:
+                    if st.button("Resend code", key="resend_code", icon=":material/refresh:", width="stretch"):
+                        if _send_code(pending["email"], pending.get("purpose", "login")):
+                            notify("New code sent.", "success")
+                        st.rerun()
+                with b2:
+                    st.button("Back", key="code_back", icon=":material/arrow_back:", width="stretch",
+                              on_click=_go, args=("login" if has_account else "setup",))
+
+            # ── forgot password ──
+            elif view == "forgot":
+                st.html('<div class="lp-form-head"><div class="t">Reset password</div>'
+                        '<div class="s">We\'ll email you a code so you can choose a new one.</div></div>')
+                _show_auth_error()
+                if not resend_ready:
+                    st.warning("Password reset needs email codes — add RESEND_API_KEY to the app secrets.")
+                with st.form("forgot_form", border=False):
+                    email = st.text_input("Email", placeholder="you@example.com", autocomplete="email")
+                    go = st.form_submit_button("Email me a code", type="primary", width="stretch", disabled=not resend_ready)
+                if go:
+                    if store.get_user(email):
+                        st.session_state["_auth_pending"] = {"email": fa_auth.normalize_email(email), "purpose": "reset"}
+                        if _send_code(email, "reset"):
+                            _go("verify")
+                        st.rerun()
+                    else:
+                        _time_mod.sleep(0.6)
+                        st.error("No account uses that email.")
+                st.button("Back to sign in", type="tertiary", on_click=_go, args=("login",), key="forgot_back", icon=":material/arrow_back:")
+
+            st.html('<div class="lp-small">Signed-in devices are remembered for 30 days.</div>')
+
+def hmac_compare(a: str, b: str) -> bool:
+    import hmac as _hmac
+    return _hmac.compare_digest(str(a or "").encode(), str(b or "").encode())
+
+if not st.session_state.authenticated:
+    render_login_page()
     st.stop()
 
 # ─────────────────────────────────────────────
@@ -2220,7 +2567,7 @@ with st.container(horizontal=True, vertical_alignment="center", gap="small"):
     sub = "Document history & security log" if st.session_state.current_page == "audit" else "Permission letters & hire contracts"
     st.html(f"""
     <div class="fa-brand">
-      <div class="fa-brand-logo">FA</div>
+      <div class="fa-brand-mark">{vch_mark_svg(30)}</div>
       <div><div class="fa-brand-title">FA-IBI Workspace</div><div class="fa-brand-sub">{sub}</div></div>
     </div>""", width="content")
     st.space("stretch")
@@ -2230,12 +2577,11 @@ with st.container(horizontal=True, vertical_alignment="center", gap="small"):
         format_func=lambda o: ("🗂️ " if o == "Workspace" else "🧾 ") + o,
     )
     if st.button("Log out", key="top_logout_btn", icon=":material/logout:"):
+        add_audit_log("Signed Out", details=st.session_state.get("user_email", ""))
         st.session_state.authenticated = False
-        if cookie_manager is not None:
-            try:
-                cookie_manager.delete(AUTH_COOKIE_NAME, key="delete_auth_cookie")
-            except Exception:
-                pass
+        st.session_state["_logged_out"] = True
+        st.session_state["_clear_cookie"] = True
+        st.session_state.pop("auth_view", None)
         st.rerun()
 
 flush_notices()
@@ -2249,6 +2595,12 @@ EVENT_ICONS = {
     "Licence Scanned": "🪪",
     "Saved to Google Drive": "☁️",
     "Verification PIN Entered": "🔐",
+    "Signed In": "🔓",
+    "Signed Out": "🚪",
+    "Sign-in Failed": "⛔",
+    "Email Code Sent": "📧",
+    "Account Created": "👤",
+    "Password Reset": "🔑",
 }
 
 def _fmt_uk(ts: str) -> str:
@@ -2263,13 +2615,13 @@ def render_audit_page():
     n_contract = sum(1 for l in logs if l.get("event_type") == "Contract Generated")
     n_perm = sum(1 for l in logs if l.get("event_type") == "Permission Letter Generated")
     n_scans = sum(1 for l in logs if l.get("event_type") == "Licence Scanned")
-    n_failed = sum(1 for l in logs if "Failed" in str(l.get("details", "")))
+    n_failed = sum(1 for l in logs if l.get("event_type") == "Sign-in Failed" or "Failed" in str(l.get("details", "")))
     st.html(f"""
     <div class="fa-stat-grid audit-page-content">
       <div class="fa-stat"><div class="fa-stat-label">Contracts</div><div class="fa-stat-value">{n_contract}</div></div>
       <div class="fa-stat"><div class="fa-stat-label">Permission letters</div><div class="fa-stat-value">{n_perm}</div></div>
       <div class="fa-stat"><div class="fa-stat-label">Licences scanned</div><div class="fa-stat-value">{n_scans}</div></div>
-      <div class="fa-stat"><div class="fa-stat-label">Failed PIN attempts</div><div class="fa-stat-value">{n_failed}</div></div>
+      <div class="fa-stat"><div class="fa-stat-label">Failed sign-ins</div><div class="fa-stat-value">{n_failed}</div></div>
     </div>""")
 
     if not logs:
