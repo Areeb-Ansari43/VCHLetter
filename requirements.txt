@@ -1,5 +1,6 @@
-streamlit
+streamlit>=1.67.0
 Pillow
+pillow-heif
 reportlab
 pytesseract
 opencv-python-headless

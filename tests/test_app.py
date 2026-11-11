@@ -268,7 +268,8 @@ def test_mg5_yf22uwm_exists_exactly_once():
     mg5 = matches[0]
     assert mg5["reg"] == "YF22 UWM"
     assert mg5["model"] == "MG 5 EV"
-    assert mg5["category"] == "Other Premium & EVs"
+    assert mg5["category"] == "MG"
+    assert mg5["rent"] == 200 and mg5["deposit"] == 500
 
 def test_default_hire_end_date():
     assert DEFAULT_HIRE_END_DATE == date(2026, 11, 27)
@@ -653,3 +654,96 @@ def test_licence_preview_card_bounds_and_aspect_ratio():
     buf_port.name = "portrait.jpg"
     loaded_port = load_uploaded_image(buf_port)
     assert loaded_port.size[1] > loaded_port.size[0]  # Aspect ratio preserved portrait
+
+
+def test_fleet_matches_spreadsheet():
+    from streamlit_app import FLEET_BY_REG, FLEET_CATEGORIES
+    assert len(FLEET_VEHICLES) == 93
+    assert len({v["reg"] for v in FLEET_VEHICLES}) == 93
+    eqe = FLEET_BY_REG["KN73 XLB"]
+    assert eqe["model"] == "MERCEDES-BENZ EQE"
+    assert (eqe["make"], eqe["model_name"]) == ("MERCEDES-BENZ", "EQE")
+    assert (eqe["rent"], eqe["deposit"], eqe["term"], eqe["fuel"]) == (440, 1000, "8 Weeks", "Electric")
+    assert FLEET_BY_REG["SF19 WPW"]["rent"] == 400
+    assert set(FLEET_CATEGORIES) == {"Mercedes-Benz", "Toyota", "Tesla", "Jaguar", "Hyundai", "MG", "Ford"}
+    for v in FLEET_VEHICLES:
+        assert v["model"] == f"{v['make']} {v['model_name']}"
+
+def test_format_uk_reg_styles():
+    from streamlit_app import format_uk_reg
+    assert format_uk_reg("yf22uwm") == "YF22 UWM"
+    assert format_uk_reg("YF22 UWM") == "YF22 UWM"
+    assert format_uk_reg("A123BCD") == "A123 BCD"
+    assert format_uk_reg("ABC123D") == "ABC 123D"
+    assert format_uk_reg("") == ""
+
+def test_clean_name_strips_titles():
+    from streamlit_app import clean_name
+    assert clean_name("MR JOHN PAUL") == "JOHN PAUL"
+    assert clean_name("Mrs. Jane") == "JANE"
+
+def test_any_file_type_loading():
+    import zipfile
+    # RGBA PNG -> flattened RGB
+    buf = io.BytesIO(); Image.new("RGBA", (120, 80), (255, 0, 0, 128)).save(buf, format="PNG"); buf.name = "x.png"
+    assert load_uploaded_image(buf).mode == "RGB"
+    # GIF
+    buf = io.BytesIO(); Image.new("RGB", (90, 60), "white").save(buf, format="GIF"); buf.name = "x.gif"
+    assert load_uploaded_image(buf).size == (90, 60)
+    # Word-style document with an embedded photo
+    photo = io.BytesIO(); Image.new("RGB", (321, 203), "blue").save(photo, format="JPEG")
+    docx = io.BytesIO()
+    with zipfile.ZipFile(docx, "w") as zf:
+        zf.writestr("word/document.xml", "<xml/>")
+        zf.writestr("word/media/image1.jpeg", photo.getvalue())
+    docx.seek(0); docx.name = "licence.docx"
+    assert load_uploaded_image(docx).size == (321, 203)
+    # Unknown extension but real image bytes
+    buf = io.BytesIO(); Image.new("RGB", (50, 40), "white").save(buf, format="PNG"); buf.name = "scan.dat"
+    assert load_uploaded_image(buf).size == (50, 40)
+
+def test_auto_crop_card_flattens_photo():
+    import numpy as np
+    from streamlit_app import auto_crop_card
+    import cv2
+    canvas_img = np.full((1200, 1600, 3), 40, np.uint8)
+    pts = np.array([[300, 250], [1300, 300], [1280, 930], [280, 880]], np.int32)
+    cv2.fillPoly(canvas_img, [pts], (235, 220, 240))
+    out = auto_crop_card(Image.fromarray(canvas_img))
+    w, h = out.size
+    assert 1.45 < w / h < 1.75
+    # Plain image with no card is returned untouched
+    plain = Image.new("RGB", (400, 300), "white")
+    assert auto_crop_card(plain).size == (400, 300)
+
+def test_fast_preview_pages():
+    from streamlit_app import render_fast_preview
+    perm = render_fast_preview("permission", {"driver_name": "JOHN SMITH", "date": "01/01/2026"})
+    assert len(perm) == 1 and perm[0][:2] == b"\xff\xd8"
+    con = render_fast_preview("contract", {"driver_name": "JOHN SMITH", "registration": "YF22 UWM"})
+    assert len(con) == 2
+
+def test_azure_content_backfills_missing_fields():
+    mock_doc = MagicMock()
+    mock_doc.fields = {}
+    mock_result = MagicMock()
+    mock_result.documents = [mock_doc]
+    mock_result.pages = []
+    mock_result.content = (
+        "DRIVING LICENCE 1. SMITH 2. MR JOHN PAUL 3. 01.01.1990 UNITED KINGDOM "
+        "4a. 01.01.2020 4b. 01.01.2030 4c. DVLA 5. SMITH901010JP9AB 12 "
+        "8. 10 HIGH STREET, LONDON, SW1A 1AA 9. AM/B/BE"
+    )
+    mock_poller = MagicMock(); mock_poller.result.return_value = mock_result
+    mock_client = MagicMock(); mock_client.begin_analyze_document.return_value = mock_poller
+    buf = io.BytesIO(); Image.new("RGB", (800, 500), "white").save(buf, format="JPEG"); buf.name = "l.jpg"
+    with patch("streamlit_app.DocumentIntelligenceClient", return_value=mock_client), \
+         patch("streamlit_app.st.secrets", {"AZURE_DOCINTEL_ENDPOINT": "https://x/", "AZURE_DOCINTEL_KEY": "k"}):
+        res = run_ocr_azure(buf)
+    assert res["surname"] == "SMITH"
+    assert res["forename"] == "JOHN PAUL"
+    assert res["dob"] == "01/01/1990"
+    assert res["expiry"] == "01/01/2030"
+    assert res["licence"] == "SMITH901010JP9AB"
+    assert res["postcode"] == "SW1A 1AA"
+    assert "HIGH STREET" in res["address"]
