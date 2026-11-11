@@ -389,7 +389,7 @@ def _inject_index_meta_tags():
     except Exception:
         pass
 
-_inject_index_meta_tags()
+# _inject_index_meta_tags()  # disabled: see patch_index.py
 
 # ─────────────────────────────────────────────
 #  STREAMLIT CONFIGURATION & BRAND HIDING
