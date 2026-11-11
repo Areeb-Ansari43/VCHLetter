@@ -1125,11 +1125,11 @@ def auto_crop_card(img: Image.Image) -> Image.Image:
         arr = cv2.GaussianBlur(arr, (5, 5), 0)
         edges = cv2.Canny(arr, 40, 130)
         edges = cv2.dilate(edges, np.ones((3, 3), np.uint8), iterations=2)
-        contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        contours, _ = cv2.findContours(edges, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
         area_total = arr.shape[0] * arr.shape[1]
-        for c in sorted(contours, key=cv2.contourArea, reverse=True)[:5]:
+        for c in sorted(contours, key=cv2.contourArea, reverse=True)[:20]:
             area = cv2.contourArea(c)
-            if area < 0.25 * area_total or area > 0.97 * area_total:
+            if area < 0.06 * area_total or area > 0.97 * area_total:
                 continue
             peri = cv2.arcLength(c, True)
             approx = cv2.approxPolyDP(c, 0.02 * peri, True)
@@ -1143,10 +1143,10 @@ def auto_crop_card(img: Image.Image) -> Image.Image:
                 continue
             ratio = wid / hei
             portrait = False
-            if 0.55 < ratio < 0.75:
+            if 0.57 < ratio < 0.69:
                 portrait = True
                 ratio = 1 / ratio
-            if not (1.35 < ratio < 1.85):
+            if not (1.45 < ratio < 1.75):
                 continue
             out_w = int(max(wid, hei) if not portrait else max(wid, hei))
             out_w = max(1000, min(2400, out_w))
@@ -1234,7 +1234,7 @@ def _field_date(fields, name):
     content = getattr(f, "content", None)
     return normalize_date(content) if content else ""
 
-def extract_signature_crop(result, orig_img: Image.Image) -> bytes:
+def extract_signature_crop(result, orig_img: Image.Image, allow_position_fallback: bool = True) -> bytes | None:
     """Extract signature crop at full resolution using Azure bounding polygon or licence position fallback."""
     orig_w, orig_h = orig_img.size
     crop_box = None
@@ -1278,6 +1278,8 @@ def extract_signature_crop(result, orig_img: Image.Image) -> bytes:
                     int(ry2 * orig_h),
                 )
 
+    if not crop_box and not allow_position_fallback:
+        return None  # no card found in the photo: a fixed-position crop would just be background
     if not crop_box:
         # Bounding box for UK driving licence signature (Field 9) beneath address
         crop_box = (
@@ -1290,7 +1292,7 @@ def extract_signature_crop(result, orig_img: Image.Image) -> bytes:
     cropped_img = orig_img.crop(crop_box)
     return clean_signature_crop(cropped_img)
 
-def clean_signature_crop(cropped_pil: Image.Image) -> bytes:
+def clean_signature_crop(cropped_pil: Image.Image) -> bytes | None:
     """Isolate dark signature ink from background, crop tightly around ink, and make background transparent."""
     if cropped_pil.mode != "RGB":
         cropped_pil = cropped_pil.convert("RGB")
@@ -1323,6 +1325,10 @@ def clean_signature_crop(cropped_pil: Image.Image) -> bytes:
 
         cv_img = cv_img[y1:y2, x1:x2]
         cleaned_mask = cleaned_mask[y1:y2, x1:x2]
+
+    ink = float(np.count_nonzero(cleaned_mask)) / max(1, cleaned_mask.size)
+    if not contours or ink < 0.004 or ink > 0.45:
+        return None  # blank or mostly background — not a signature
 
     rgba = cv2.cvtColor(cv_img, cv2.COLOR_RGB2RGBA)
     rgba[:, :, 3] = cleaned_mask
@@ -1392,22 +1398,24 @@ def run_ocr_azure(uploaded_file) -> dict:
             out["licence"] = backup["licence"]
 
     try:
-        out["signature_bytes"] = extract_signature_crop(result, card_img)
+        out["signature_bytes"] = extract_signature_crop(result, card_img, allow_position_fallback=card_img is not orig_img)
     except Exception:
         out["signature_bytes"] = None
     return out
 
-def extract_signature_crop_fallback(uploaded_file) -> bytes:
-    orig_img = auto_crop_card(load_uploaded_image(uploaded_file))
-    orig_w, orig_h = orig_img.size
+def extract_signature_crop_fallback(uploaded_file) -> bytes | None:
+    orig = load_uploaded_image(uploaded_file)
+    card = auto_crop_card(orig)
+    if card is orig:
+        return None  # card not found: don't guess a signature from the background
+    orig_w, orig_h = card.size
     crop_box = (
         int(0.18 * orig_w),
         int(0.73 * orig_h),
         int(0.55 * orig_w),
         int(0.90 * orig_h),
     )
-    cropped_img = orig_img.crop(crop_box)
-    return clean_signature_crop(cropped_img)
+    return clean_signature_crop(card.crop(crop_box))
 
 def scan_licence(uploaded_file) -> tuple[dict, str]:
     """Scan a licence with the best engine available. Returns (fields, engine)."""
@@ -2520,8 +2528,9 @@ def apply_ocr_results_to_session_state(p: dict):
         st.session_state.ocr_expiry = expiry
         st.session_state["c_form_exp"] = normalize_date(expiry)
 
-    if sig_bytes:
-        st.session_state.ocr_signature_bytes = sig_bytes
+    if "signature_bytes" in p:
+        # A new scan replaces the old signature, even when none was found.
+        st.session_state.ocr_signature_bytes = sig_bytes or None
 
     curr_driver_name = st.session_state.get("p_form_name") or client_name
     curr_reg = st.session_state.get("p_form_reg") or st.session_state.get("sel_reg", "")
@@ -2724,14 +2733,16 @@ if st.session_state.current_page == "audit":
 #  SECURED MASTER WORKSPACE
 # ─────────────────────────────────────────────
 @st.cache_data(max_entries=8, show_spinner=False)
-def licence_thumbnail(file_bytes: bytes, name: str) -> bytes:
+def licence_thumbnail(file_bytes: bytes, name: str) -> tuple[bytes, int]:
+    """Small preview of the licence: just the card when it can be found.
+    Returns (jpeg bytes at 2x for sharp screens, display width in px)."""
     buf_in = io.BytesIO(file_bytes)
     buf_in.name = name
-    img = load_uploaded_image(buf_in)
-    img.thumbnail((900, 900))
+    img = auto_crop_card(load_uploaded_image(buf_in))
+    img.thumbnail((560, 360))  # shown at half size → max 280 x 180 on screen
     out = io.BytesIO()
     img.save(out, format="JPEG", quality=85)
-    return out.getvalue()
+    return out.getvalue(), max(80, img.width // 2)
 
 top_scan, top_fleet = st.columns([1, 1], gap="medium")
 
@@ -2768,18 +2779,19 @@ with top_scan:
                             notify(f"Licence scan failed: {e}. Please enter the details manually.", "error")
                     st.session_state.last_scan_id = fid
 
-                pv1, pv2 = st.columns([3, 2], vertical_alignment="center")
+                pv1, pv2 = st.columns([1, 1], vertical_alignment="center", gap="small")
                 with pv1:
                     try:
-                        st.image(licence_thumbnail(file_bytes, uploaded.name), caption=uploaded.name, width=360)
+                        thumb, thumb_w = licence_thumbnail(file_bytes, uploaded.name)
+                        st.image(thumb, width=thumb_w)
                     except Exception as img_err:
                         st.warning(f"Unable to render licence preview: {img_err}")
                 with pv2:
-                    if st.session_state.ocr_signature_bytes:
-                        st.caption("Signature captured")
-                        st.image(st.session_state.ocr_signature_bytes, width=160)
                     if st.session_state.scan_engine:
                         st.caption(f"Read with {st.session_state.scan_engine}")
+                    if st.session_state.ocr_signature_bytes:
+                        st.caption("Signature")
+                        st.image(st.session_state.ocr_signature_bytes, width=130)
                     if st.button("Scan again", key="rescan_btn", icon=":material/refresh:", type="tertiary"):
                         st.session_state.last_scan_id = ""
                         st.rerun()

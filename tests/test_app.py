@@ -636,7 +636,7 @@ def test_licence_preview_card_bounds_and_aspect_ratio():
     assert ".licence-preview-card" in code
     assert "max-width: 420px;" in code
     assert "object-fit: contain !important;" in code
-    assert "width=360" in code
+    assert "licence_thumbnail" in code
 
     # Test aspect ratio preservation for JPG landscape and portrait images
     img_land = Image.new("RGB", (800, 500), color="blue")
@@ -747,3 +747,21 @@ def test_azure_content_backfills_missing_fields():
     assert res["licence"] == "SMITH901010JP9AB"
     assert res["postcode"] == "SW1A 1AA"
     assert "HIGH STREET" in res["address"]
+
+def test_auto_crop_finds_small_card_on_a_book():
+    """Phone photo: portrait book filling most of the frame, card ~15% of it."""
+    import numpy as np, cv2
+    from streamlit_app import auto_crop_card
+    img = np.full((1600, 1200, 3), 200, np.uint8)               # light table
+    cv2.rectangle(img, (100, 150), (1100, 1450), (45, 45, 50), -1)  # dark portrait book (ratio 0.77)
+    cv2.rectangle(img, (230, 700), (970, 1167), (230, 215, 160), -1)  # card 740 x 467 (1.585)
+    out = auto_crop_card(Image.fromarray(img))
+    w, h = out.size
+    assert 1.45 < w / h < 1.75
+    assert w < 1200 or h < 1600  # actually cropped
+
+def test_no_fake_signature_without_card():
+    from streamlit_app import extract_signature_crop_fallback, clean_signature_crop
+    buf = io.BytesIO(); Image.new("RGB", (900, 1200), (40, 40, 40)).save(buf, format="JPEG"); buf.name = "x.jpg"
+    assert extract_signature_crop_fallback(buf) is None
+    assert clean_signature_crop(Image.new("RGB", (300, 80), "white")) is None
