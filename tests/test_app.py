@@ -279,7 +279,7 @@ def test_permission_letter_generation():
         "date": "10/06/2026",
         "insurance_policy": "HAVFL-000211",
         "registration": "MA16 BFZ",
-        "make_model": "MERCEDES-BENZ E220D",
+        "make_model": "MERCEDES-BENZ E220",
         "driver_name": "AREEB ANSARI",
         "address": "123 TEST STREET, LONDON",
         "license_no": "ANSAR901019A999",
@@ -341,7 +341,7 @@ def test_live_document_preview_rendering():
         "date": "10/06/2026",
         "insurance_policy": "HAVFL-000211",
         "registration": "MA16 BFZ",
-        "make_model": "MERCEDES-BENZ E220D",
+        "make_model": "MERCEDES-BENZ E220",
         "driver_name": "AREEB ANSARI",
         "address": "123 TEST STREET, LONDON",
         "license_no": "ANSAR901019A999",
@@ -778,3 +778,8 @@ def test_calendar_header_not_hidden():
     import streamlit_app
     code = open(streamlit_app.__file__, encoding="utf-8").read()
     assert "\nheader {visibility: hidden;}" not in code
+
+def test_e220_has_no_d_suffix():
+    e220 = [v for v in FLEET_VEHICLES if v["model_name"].startswith("E220")]
+    assert len(e220) == 21
+    assert all(v["model"] == "MERCEDES-BENZ E220" for v in e220)
