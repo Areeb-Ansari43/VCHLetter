@@ -783,3 +783,12 @@ def test_e220_has_no_d_suffix():
     e220 = [v for v in FLEET_VEHICLES if v["model_name"].startswith("E220")]
     assert len(e220) == 21
     assert all(v["model"] == "MERCEDES-BENZ E220" for v in e220)
+
+def test_contract_prints_new_bank_details():
+    import pypdfium2
+    from streamlit_app import BANK_DETAILS
+    assert BANK_DETAILS == {"acc": "43605086", "sort_code": "20 42 73"}
+    pdf = pypdfium2.PdfDocument(generate_contract({"driver_name": "JOHN"}))
+    text = pdf[0].get_textpage().get_text_range()
+    assert "ACC: 43605086" in text
+    assert "SORT CODE: 20 42 73" in text

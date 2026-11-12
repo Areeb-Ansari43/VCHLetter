@@ -1723,6 +1723,25 @@ def _stamp_hirer_signature(cv, signature_bytes: bytes, spot: dict):
     except Exception:
         pass
 
+# ─────────────────────────────────────────────
+#  BANK DETAILS (printed over the "Method of Payment" box on page 1)
+#  The template image still carries the old details, so they are covered
+#  with white and re-printed from here. Change these two values to update.
+# ─────────────────────────────────────────────
+BANK_DETAILS = {"acc": "43605086", "sort_code": "20 42 73"}
+_PX = 612 / 1414  # template pixel → PDF point (x)
+_PY = 792 / 2000  # template pixel → PDF point (y)
+
+def _draw_bank_details(cv):
+    # White-out the two old lines (template pixels x 970-1345, y 1189-1241).
+    cv.setFillColorRGB(1, 1, 1)
+    cv.rect(970 * _PX, 792 - 1241 * _PY, (1345 - 970) * _PX, (1241 - 1189) * _PY, stroke=0, fill=1)
+    cv.setFillColorRGB(0, 0, 0)
+    cv.setFont("Helvetica-Bold", 9.1)
+    x = 974 * _PX
+    cv.drawString(x, 792 - 1208 * _PY, f"ACC: {BANK_DETAILS['acc']}")
+    cv.drawString(x, 792 - 1237 * _PY, f"SORT CODE: {BANK_DETAILS['sort_code']}")
+
 def generate_contract(data: dict, include_background: bool = True) -> bytes:
     buf = io.BytesIO()
     cv = canvas.Canvas(buf, pagesize=letter, pageCompression=1)
@@ -1742,6 +1761,7 @@ def generate_contract(data: dict, include_background: bool = True) -> bytes:
         value = normalize_address(raw_val) if key == "address" else str(raw_val)
         _draw_fit(cv, value, x, y, base_size=size, max_width=CONTRACT_FIELD_MAXW.get(key), font=font_style)
 
+    _draw_bank_details(cv)
     _stamp_signature(cv, str(data.get("owner_signature", "") or ""), page=1)
     if data.get("hirer_signature"):
         _stamp_hirer_signature(cv, data.get("hirer_signature"), spot={"x": 160, "y": 66, "width": 110, "height": 25})
