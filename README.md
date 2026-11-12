@@ -7,7 +7,7 @@ Main file: `streamlit_app.py` (it runs `src/streamlit_app.py`).
 - **Driver's licence scanner** – accepts any photo (JPG, PNG, HEIC, WEBP, AVIF, TIFF, GIF…),
   PDFs (page 1) and documents with an embedded photo. Finds and straightens the card,
   then reads it with Azure AI Document Intelligence (Tesseract as fallback).
-- **Fleet vehicle picker** – 93 vehicles from `VCH_Car_Fleet_01092026.numbers`, grouped by make.
+- **Fleet vehicle picker** – 95 vehicles from `VCH_Car_Fleet_01092026.numbers`, grouped by make.
   Picking a car fills reg, make, model, rent and deposit on both documents.
 - **Live document preview** – updates while you type (0.3 s after you pause).
   Name, licence, address, vehicle and dates are shared between both documents.

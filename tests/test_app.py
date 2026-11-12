@@ -658,8 +658,8 @@ def test_licence_preview_card_bounds_and_aspect_ratio():
 
 def test_fleet_matches_spreadsheet():
     from streamlit_app import FLEET_BY_REG, FLEET_CATEGORIES
-    assert len(FLEET_VEHICLES) == 93
-    assert len({v["reg"] for v in FLEET_VEHICLES}) == 93
+    assert len(FLEET_VEHICLES) == 95
+    assert len({v["reg"] for v in FLEET_VEHICLES}) == 95
     eqe = FLEET_BY_REG["KN73 XLB"]
     assert eqe["model"] == "MERCEDES-BENZ EQE"
     assert (eqe["make"], eqe["model_name"]) == ("MERCEDES-BENZ", "EQE")
@@ -765,3 +765,16 @@ def test_no_fake_signature_without_card():
     buf = io.BytesIO(); Image.new("RGB", (900, 1200), (40, 40, 40)).save(buf, format="JPEG"); buf.name = "x.jpg"
     assert extract_signature_crop_fallback(buf) is None
     assert clean_signature_crop(Image.new("RGB", (300, 80), "white")) is None
+
+def test_new_ioniqs_and_lookalike_reg_matching():
+    from streamlit_app import FLEET_BY_REG, find_fleet_vehicle
+    for reg in ("EF70 ZYB", "EK70 AOO"):
+        v = FLEET_BY_REG[reg]
+        assert v["model"] == "HYUNDAI IONIQ" and v["category"] == "Hyundai" and v["rent"] == 210
+    assert find_fleet_vehicle("EK70A00")["reg"] == "EK70 AOO"   # typed with zeros
+    assert find_fleet_vehicle("ef70zyb")["reg"] == "EF70 ZYB"
+
+def test_calendar_header_not_hidden():
+    import streamlit_app
+    code = open(streamlit_app.__file__, encoding="utf-8").read()
+    assert "\nheader {visibility: hidden;}" not in code

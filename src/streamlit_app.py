@@ -432,7 +432,7 @@ st.html("""
 <style>
 #MainMenu {visibility: hidden;}
 footer {visibility: hidden;}
-header {visibility: hidden;}
+header[data-testid="stHeader"] {visibility: hidden;}
 [data-testid="stHeader"] {display: none !important;}
 [data-testid="stToolbar"] {visibility: hidden !important;}
 [data-testid="stStatusWidget"] {visibility: hidden !important;}
@@ -755,9 +755,11 @@ FLEET_VEHICLES = [
     {"reg": "EF70 ZVM", "make": "HYUNDAI", "model_name": "IONIQ", "model": "HYUNDAI IONIQ", "category": "Hyundai", "fuel": "Plug-in-Hybrid", "year": 2020, "rent": 210, "deposit": 500, "miles": 5000, "term": "6 Weeks"},
     {"reg": "EF70 ZYA", "make": "HYUNDAI", "model_name": "IONIQ", "model": "HYUNDAI IONIQ", "category": "Hyundai", "fuel": "Plug-in-Hybrid", "year": 2020, "rent": 210, "deposit": 500, "miles": 5000, "term": "6 Weeks"},
     {"reg": "EF70 ZYD", "make": "HYUNDAI", "model_name": "IONIQ", "model": "HYUNDAI IONIQ", "category": "Hyundai", "fuel": "Plug-in-Hybrid", "year": 2020, "rent": 210, "deposit": 500, "miles": 5000, "term": "6 Weeks"},
+    {"reg": "EF70 ZYB", "make": "HYUNDAI", "model_name": "IONIQ", "model": "HYUNDAI IONIQ", "category": "Hyundai", "fuel": "Plug-in-Hybrid", "year": 2020, "rent": 210, "deposit": 500, "miles": 5000, "term": "6 Weeks"},
     {"reg": "GU72 DVP", "make": "HYUNDAI", "model_name": "IONIQ", "model": "HYUNDAI IONIQ", "category": "Hyundai", "fuel": "Plug-in-Hybrid", "year": 2022, "rent": 210, "deposit": 500, "miles": 5000, "term": "6 Weeks"},
     {"reg": "FL70 EUV", "make": "HYUNDAI", "model_name": "IONIQ", "model": "HYUNDAI IONIQ", "category": "Hyundai", "fuel": "Plug-in-Hybrid", "year": 2020, "rent": 210, "deposit": 500, "miles": 5000, "term": "6 Weeks"},
     {"reg": "EK70 BKJ", "make": "HYUNDAI", "model_name": "IONIQ", "model": "HYUNDAI IONIQ", "category": "Hyundai", "fuel": "Plug-in-Hybrid", "year": 2020, "rent": 210, "deposit": 500, "miles": 5000, "term": "6 Weeks"},
+    {"reg": "EK70 AOO", "make": "HYUNDAI", "model_name": "IONIQ", "model": "HYUNDAI IONIQ", "category": "Hyundai", "fuel": "Plug-in-Hybrid", "year": 2020, "rent": 210, "deposit": 500, "miles": 5000, "term": "6 Weeks"},
     {"reg": "YC72 HZM", "make": "MG", "model_name": "5 EV", "model": "MG 5 EV", "category": "MG", "fuel": "Electric", "year": 2022, "rent": 200, "deposit": 500, "miles": 5000, "term": "6 Weeks"},
     {"reg": "YF22 UVZ", "make": "MG", "model_name": "5 EV", "model": "MG 5 EV", "category": "MG", "fuel": "Electric", "year": 2022, "rent": 200, "deposit": 500, "miles": 5000, "term": "6 Weeks"},
     {"reg": "YF22 UWK", "make": "MG", "model_name": "5 EV", "model": "MG 5 EV", "category": "MG", "fuel": "Electric", "year": 2022, "rent": 200, "deposit": 500, "miles": 5000, "term": "6 Weeks"},
@@ -2421,12 +2423,17 @@ def apply_vehicle(car: dict | None, notice: bool = True):
     if notice:
         queue_notice(f"{car['reg']} · {car['model']} added — £{car['rent']}/week, £{car['deposit']} deposit", "info")
 
-def find_fleet_vehicle(reg_text: str) -> dict | None:
+def _reg_key(reg_text: str) -> str:
+    """Compact reg for matching; treats look-alike O/0 and I/1 as the same."""
     compact = re.sub(r"[^A-Z0-9]", "", str(reg_text or "").upper())
-    if len(compact) < 5:
+    return compact.replace("O", "0").replace("I", "1")
+
+def find_fleet_vehicle(reg_text: str) -> dict | None:
+    key = _reg_key(reg_text)
+    if len(key) < 5:
         return None
     for v in FLEET_VEHICLES:
-        if re.sub(r"[^A-Z0-9]", "", v["reg"]) == compact:
+        if _reg_key(v["reg"]) == key:
             return v
     return None
 
