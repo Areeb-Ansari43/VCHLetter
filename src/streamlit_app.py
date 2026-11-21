@@ -771,6 +771,7 @@ FLEET_VEHICLES = [
     {"reg": "YH76Z LWF", "make": "MG", "model_name": "S9", "model": "MG S9", "category": "MG", "fuel": "Plug-in-Hybrid", "year": 2026, "rent": 300, "deposit": 500, "miles": 5000, "term": "6 Weeks"},
     {"reg": "MD25 AYY", "make": "FORD", "model_name": "TOURNEO CUSTOM", "model": "FORD TOURNEO CUSTOM", "category": "Ford", "fuel": "Electric", "year": 2025, "rent": 430, "deposit": 500, "miles": 5000, "term": "6 Weeks"},
     {"reg": "MD25 DDZ", "make": "FORD", "model_name": "TOURNEO CUSTOM", "model": "FORD TOURNEO CUSTOM", "category": "Ford", "fuel": "Electric", "year": 2025, "rent": 430, "deposit": 500, "miles": 5000, "term": "6 Weeks"},
+    {"reg": "MD25 DCX", "make": "FORD", "model_name": "TOURNEO CUSTOM", "model": "FORD TOURNEO CUSTOM", "category": "Ford", "fuel": "Electric", "year": 2025, "rent": 430, "deposit": 500, "miles": 5000, "term": "6 Weeks"},
     {"reg": "RX25 CME", "make": "FORD", "model_name": "TOURNEO CUSTOM", "model": "FORD TOURNEO CUSTOM", "category": "Ford", "fuel": "Electric", "year": 2025, "rent": 430, "deposit": 500, "miles": 5000, "term": "6 Weeks"},
     {"reg": "BK76 WJG", "make": "FORD", "model_name": "TOURNEO CUSTOM", "model": "FORD TOURNEO CUSTOM", "category": "Ford", "fuel": "Electric", "year": 2025, "rent": 430, "deposit": 500, "miles": 5000, "term": "6 Weeks"},
     {"reg": "BK76 VWB", "make": "FORD", "model_name": "TOURNEO CUSTOM", "model": "FORD TOURNEO CUSTOM", "category": "Ford", "fuel": "Electric", "year": 2025, "rent": 430, "deposit": 500, "miles": 5000, "term": "6 Weeks"},

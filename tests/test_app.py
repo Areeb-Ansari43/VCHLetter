@@ -658,8 +658,8 @@ def test_licence_preview_card_bounds_and_aspect_ratio():
 
 def test_fleet_matches_spreadsheet():
     from streamlit_app import FLEET_BY_REG, FLEET_CATEGORIES
-    assert len(FLEET_VEHICLES) == 95
-    assert len({v["reg"] for v in FLEET_VEHICLES}) == 95
+    assert len(FLEET_VEHICLES) == 96
+    assert len({v["reg"] for v in FLEET_VEHICLES}) == 96
     eqe = FLEET_BY_REG["KN73 XLB"]
     assert eqe["model"] == "MERCEDES-BENZ EQE"
     assert (eqe["make"], eqe["model_name"]) == ("MERCEDES-BENZ", "EQE")
@@ -870,3 +870,9 @@ def test_reg_option_label_and_pending_reg():
     st.session_state["bulk_reg_1"] = "ab12cde"
     sa._pending_reg_changed(1)
     assert st.session_state["bulk_reg_1"] == "AB12 CDE"
+
+def test_md25_dcx_in_fleet():
+    from streamlit_app import FLEET_BY_REG, find_fleet_vehicle
+    v = FLEET_BY_REG["MD25 DCX"]
+    assert v["model"] == "FORD TOURNEO CUSTOM" and v["rent"] == 430
+    assert find_fleet_vehicle("md25dcx")["reg"] == "MD25 DCX"
