@@ -779,6 +779,7 @@ FLEET_VEHICLES = [
 
 FLEET_CATEGORIES = list(dict.fromkeys(v["category"] for v in FLEET_VEHICLES))
 FLEET_BY_REG = {v["reg"]: v for v in FLEET_VEHICLES}
+FLEET_REG_OPTIONS = [v["reg"] for v in FLEET_VEHICLES]
 
 # ─────────────────────────────────────────────
 #  PARSING AND GENERATION ENGINES
@@ -2881,18 +2882,27 @@ def _apply_bulk_edits(editor_key: str):
             rows.pop(idx)
     _bulk_bump()
 
+def _reg_option_label(reg) -> str:
+    # Non-fleet regs must show as themselves: Streamlit stores a typed-in
+    # option by its label, so any extra text would end up in the reg.
+    v = FLEET_BY_REG.get(reg)
+    return f"{reg}  ·  {v['model']}" if v else str(reg)
+
 def _pending_reg_changed(nonce: int):
-    car = find_fleet_vehicle(st.session_state.get(f"bulk_reg_{nonce}", ""))
+    val = str(st.session_state.get(f"bulk_reg_{nonce}") or "").split("·")[0].strip()
+    car = find_fleet_vehicle(val)
     if car:
         st.session_state[f"bulk_reg_{nonce}"] = car["reg"]
         st.session_state[f"bulk_mm_{nonce}"] = car["model"]
+    elif val:
+        st.session_state[f"bulk_reg_{nonce}"] = format_uk_reg(val)
 
 def _add_pending(nonce: int):
     ss = st.session_state
     pending = ss.get("bulk_pending") or {}
     res = {"name": ss.get(f"bulk_name_{nonce}", ""), "licence": ss.get(f"bulk_lic_{nonce}", "").upper(),
            "address": ss.get(f"bulk_addr_{nonce}", ""), "status": pending.get("status", ""), "file": pending.get("file", "")}
-    row = _bulk_row(res, ss.get(f"bulk_reg_{nonce}", ""), ss.get(f"bulk_mm_{nonce}", "").upper())
+    row = _bulk_row(res, ss.get(f"bulk_reg_{nonce}") or "", (ss.get(f"bulk_mm_{nonce}") or "").upper())
     _bulk_list().append(row)
     ss.bulk_pending = None
     ss.bulk_nonce = nonce + 1          # clears the uploader and the form for the next licence
@@ -2933,7 +2943,7 @@ def render_bulk_page():
                 ss[f"bulk_name_{nonce}"] = res["name"]
                 ss[f"bulk_lic_{nonce}"] = res["licence"]
                 ss[f"bulk_addr_{nonce}"] = res["address"]
-                ss[f"bulk_reg_{nonce}"] = ""
+                ss[f"bulk_reg_{nonce}"] = None
                 ss[f"bulk_mm_{nonce}"] = ""
                 add_audit_log("Licence Scanned", details=f"Driver: {res['name'] or 'unknown'}, Engine: {res.get('engine', '')} (bulk)")
             else:
@@ -2968,11 +2978,13 @@ def render_bulk_page():
             st.text_input("Address", key=f"bulk_addr_{nonce}")
             r3, r4 = st.columns(2)
             with r3:
-                st.text_input("Vehicle Reg", key=f"bulk_reg_{nonce}", placeholder="Type the reg, e.g. KN73 XLB",
-                              on_change=_pending_reg_changed, args=(nonce,), live="400ms")
+                st.selectbox("Vehicle Reg", FLEET_REG_OPTIONS, key=f"bulk_reg_{nonce}", index=None,
+                             placeholder="Start typing the reg or model, then click the car…",
+                             format_func=_reg_option_label, accept_new_options=True,
+                             on_change=_pending_reg_changed, args=(nonce,))
             with r4:
                 st.text_input("Make & Model", key=f"bulk_mm_{nonce}", placeholder="Fills in for fleet cars")
-            reg_typed = str(ss.get(f"bulk_reg_{nonce}", "")).strip()
+            reg_typed = str(ss.get(f"bulk_reg_{nonce}") or "").strip()
             if reg_typed and not find_fleet_vehicle(reg_typed):
                 st.caption("That reg isn't in the fleet list — type the make & model yourself.")
             b1, b2 = st.columns([3, 1])
@@ -2990,7 +3002,7 @@ def render_bulk_page():
     # ── 2. The list ──
     with st.container(border=True):
         st.html(f'<div class="fa-section-title">2 · Drivers ({len(rows)})</div>')
-        st.caption("Click a cell to correct it; typing a fleet reg fills in the make & model. "
+        st.caption("Click a cell to correct it. Double-click a Vehicle Reg cell and start typing to pick a car — the make & model fill in. "
                    "Untick to leave someone out, or select a row and press Delete to remove it.")
         import pandas as pd
         df = pd.DataFrame([{
@@ -3007,7 +3019,9 @@ def render_bulk_page():
                 "Driver Name": st.column_config.TextColumn(width="medium"),
                 "Licence No": st.column_config.TextColumn(width="medium"),
                 "Address": st.column_config.TextColumn(width="large"),
-                "Vehicle Reg": st.column_config.TextColumn(width="small"),
+                "Vehicle Reg": st.column_config.SelectboxColumn(
+                    width="medium", options=list(dict.fromkeys([v["reg"] for v in FLEET_VEHICLES] + [r["reg"] for r in rows if r["reg"]])),
+                    format_func=_reg_option_label),
                 "Make & Model": st.column_config.TextColumn(width="medium"),
                 "Status": st.column_config.TextColumn(width="small"),
             },

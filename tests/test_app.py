@@ -858,3 +858,15 @@ def test_bulk_letters_use_custom_make_model():
                                       date(2026, 11, 21), date(2026, 11, 27), date(2027, 11, 27), "HAVFT-210864")
     text = pypdfium2.PdfDocument(letters[0][1])[0].get_textpage().get_text_range()
     assert "TOYOTA PRIUS" in text and "AB12 CDE" in text
+
+def test_reg_option_label_and_pending_reg():
+    import streamlit_app as sa
+    assert sa._reg_option_label("KN73 XLB") == "KN73 XLB  ·  MERCEDES-BENZ EQE"
+    assert sa._reg_option_label("AB12 CDE") == "AB12 CDE"  # non-fleet: no extra text
+    st.session_state.clear()
+    st.session_state["bulk_reg_0"] = "ef70zyb"
+    sa._pending_reg_changed(0)
+    assert st.session_state["bulk_reg_0"] == "EF70 ZYB" and st.session_state["bulk_mm_0"] == "HYUNDAI IONIQ"
+    st.session_state["bulk_reg_1"] = "ab12cde"
+    sa._pending_reg_changed(1)
+    assert st.session_state["bulk_reg_1"] == "AB12 CDE"
