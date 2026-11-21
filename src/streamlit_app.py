@@ -1354,23 +1354,47 @@ def _azure_payload(img: Image.Image) -> bytes:
             return data
     return data
 
+# How often to ask Azure "is it done yet?". The SDK's default is 30 seconds
+# whenever Azure doesn't send a Retry-After header, which made every licence
+# take 30s+ even though Azure finishes in 2-5s.
+AZURE_POLL_SECONDS = 1
+
+_AZURE_CLIENTS: dict = {}
+_AZURE_CLIENTS_LOCK = threading.Lock()
+
+def _azure_client():
+    """One shared client (keeps the HTTPS connection open between licences)."""
+    endpoint, key = get_secret("AZURE_DOCINTEL_ENDPOINT"), get_secret("AZURE_DOCINTEL_KEY")
+    cache_key = (id(DocumentIntelligenceClient), endpoint, key)
+    with _AZURE_CLIENTS_LOCK:
+        client = _AZURE_CLIENTS.get(cache_key)
+        if client is None:
+            client = DocumentIntelligenceClient(
+                endpoint=endpoint, credential=AzureKeyCredential(key), polling_interval=AZURE_POLL_SECONDS,
+            )
+            _AZURE_CLIENTS[cache_key] = client
+        return client
+
 def run_ocr_azure(uploaded_file) -> dict:
+    t0 = _time_mod.perf_counter()
     orig_img = load_uploaded_image(uploaded_file)
     card_img = auto_crop_card(orig_img)
+    payload = _azure_payload(card_img)
+    t_prep = _time_mod.perf_counter() - t0
 
     try:
-        client = DocumentIntelligenceClient(
-            endpoint=get_secret("AZURE_DOCINTEL_ENDPOINT"),
-            credential=AzureKeyCredential(get_secret("AZURE_DOCINTEL_KEY")),
-        )
-        poller = client.begin_analyze_document(
+        t1 = _time_mod.perf_counter()
+        poller = _azure_client().begin_analyze_document(
             "prebuilt-idDocument",
-            body=_azure_payload(card_img),
+            body=payload,
             content_type="image/jpeg",
+            polling_interval=AZURE_POLL_SECONDS,
         )
-        result = poller.result(timeout=45)
+        result = poller.result(timeout=60)
+        t_azure = _time_mod.perf_counter() - t1
     except Exception as e:
         raise ValueError(f"Azure Document Intelligence error: {e}")
+    logging.info("Licence read: prepare %.2fs, Azure %.2fs", t_prep, t_azure)
 
     if not result.documents:
         raise ValueError("Azure couldn't detect an ID document in this photo.")
@@ -1401,6 +1425,7 @@ def run_ocr_azure(uploaded_file) -> dict:
         if out.get("licence") and not re.fullmatch(r"[A-Z9]{5}\d{6}[A-Z9]{2}[A-Z0-9]{3}", out["licence"]) and backup.get("licence"):
             out["licence"] = backup["licence"]
 
+    out["seconds"] = round(_time_mod.perf_counter() - t0, 1)
     try:
         out["signature_bytes"] = extract_signature_crop(result, card_img, allow_position_fallback=card_img is not orig_img)
     except Exception:
@@ -1428,16 +1453,19 @@ def scan_licence(uploaded_file) -> tuple[dict, str]:
         try:
             return run_ocr_azure(uploaded_file), "Azure AI"
         except Exception as e:
+            logging.warning("Azure licence read failed, falling back to Tesseract: %s", e)
             errors.append(str(e))
     if pytesseract is not None:
         try:
+            t0 = _time_mod.perf_counter()
             raw = run_ocr(uploaded_file)
             p = parse_licence(raw)
             try:
                 p["signature_bytes"] = extract_signature_crop_fallback(uploaded_file)
             except Exception:
                 p["signature_bytes"] = None
-            return p, "Tesseract"
+            p["seconds"] = round(_time_mod.perf_counter() - t0, 1)
+            return p, "Tesseract" + (" (Azure failed)" if errors else "")
         except Exception as e:
             errors.append(str(e))
     if not errors:
@@ -2785,7 +2813,8 @@ def _scan_one(name: str, data: bytes) -> dict:
         address = get_full_address(p.get("address", ""), p.get("postcode", ""))
         missing = [lbl for k, lbl in (("name", "name"), ("licence", "licence no"), ("address", "address"))
                    if not (full_name if k == "name" else address if k == "address" else p.get(k))]
-        status = "✅ Read" if not missing else "⚠️ Check: " + ", ".join(missing)
+        took = f" in {p['seconds']}s" if p.get("seconds") is not None else ""
+        status = (f"✅ Read{took}" if not missing else "⚠️ Check: " + ", ".join(missing)) + ("" if engine == "Azure AI" else f" · {engine}")
         return {"name": full_name, "licence": (p.get("licence") or "").upper(), "address": address,
                 "dob": p.get("dob", ""), "status": status, "engine": engine}
     except Exception as e:
@@ -3140,7 +3169,7 @@ with top_scan:
                         try:
                             p, engine = scan_licence(uploaded)
                             apply_ocr_results_to_session_state(p)
-                            st.session_state.scan_engine = engine
+                            st.session_state.scan_engine = engine + (f" in {p['seconds']}s" if p.get("seconds") is not None else "")
                             found = [lbl for k, lbl in (("surname", "name"), ("licence", "licence no"), ("dob", "date of birth"),
                                                          ("expiry", "expiry"), ("address", "address"), ("postcode", "postcode")) if p.get(k)]
                             add_audit_log("Licence Scanned", details=f"Driver: {st.session_state.ocr_name or 'unknown'}, Engine: {engine}, Fields: {len(found)}/6")

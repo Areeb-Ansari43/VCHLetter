@@ -878,3 +878,20 @@ def test_md25_dcx_in_fleet():
     v = FLEET_BY_REG["MD25 DCX"]
     assert v["model"] == "FORD TOURNEO CUSTOM" and v["rent"] == 430
     assert find_fleet_vehicle("md25dcx")["reg"] == "MD25 DCX"
+
+def test_azure_polls_every_second_and_reuses_client():
+    import streamlit_app as sa
+    mock_doc = MagicMock(); mock_doc.fields = {}
+    res = MagicMock(); res.documents = [mock_doc]; res.pages = []; res.content = ""
+    poller = MagicMock(); poller.result.return_value = res
+    client = MagicMock(); client.begin_analyze_document.return_value = poller
+    cls = MagicMock(return_value=client)
+    with patch("streamlit_app.DocumentIntelligenceClient", cls), \
+         patch("streamlit_app.st.secrets", {"AZURE_DOCINTEL_ENDPOINT": "https://x/", "AZURE_DOCINTEL_KEY": "k2"}):
+        for _ in range(2):
+            buf = io.BytesIO(); Image.new("RGB", (800, 500), "white").save(buf, format="JPEG"); buf.name = "l.jpg"
+            out = sa.run_ocr_azure(buf)
+    assert cls.call_count == 1                                    # one shared client
+    assert cls.call_args.kwargs["polling_interval"] == 1
+    assert client.begin_analyze_document.call_args.kwargs["polling_interval"] == 1
+    assert isinstance(out["seconds"], float)
