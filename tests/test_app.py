@@ -833,3 +833,28 @@ def test_new_insurance_defaults():
 def test_parse_licence_keeps_house_number():
     p = parse_licence("1. SMITH 2. JOHN 3. 01.01.1990 4b. 01.01.2030 5. SMITH901010JP9AB 8. 12 HIGH STREET, LONDON, SW1A 1AA 9. AM")
     assert p["address"].startswith("12 HIGH STREET")
+
+def test_bulk_list_edits_persist_and_fill_make_model():
+    import streamlit_app as sa
+    st.session_state.clear()
+    rows = sa._bulk_list()
+    rows.append(sa._bulk_row({"name": "John Smith", "licence": "L1", "address": "1 HIGH ST"}, "kn73xlb"))
+    rows.append(sa._bulk_row({"name": "Jane Doe", "licence": "L2", "address": "2 LOW RD"}))
+    assert rows[0]["reg"] == "KN73 XLB" and rows[0]["make_model"] == "MERCEDES-BENZ EQE"
+    assert rows[1]["reg"] == "" and rows[1]["make_model"] == ""
+    st.session_state["ed"] = {"edited_rows": {1: {"Vehicle Reg": "ek70a00", "Driver Name": "Jane D"}, 0: {"✓": False}},
+                              "deleted_rows": []}
+    sa._apply_bulk_edits("ed")
+    assert rows[1]["reg"] == "EK70 AOO" and rows[1]["make_model"] == "HYUNDAI IONIQ" and rows[1]["name"] == "Jane D"
+    assert rows[0]["include"] is False
+    st.session_state["ed"] = {"edited_rows": {}, "deleted_rows": [0]}
+    sa._apply_bulk_edits("ed")
+    assert [r["name"] for r in sa._bulk_list()] == ["Jane D"]
+
+def test_bulk_letters_use_custom_make_model():
+    import pypdfium2
+    from streamlit_app import bulk_permission_letters
+    letters = bulk_permission_letters([{"name": "A B", "licence": "X", "address": "", "reg": "AB12 CDE", "make_model": "TOYOTA PRIUS"}],
+                                      date(2026, 11, 21), date(2026, 11, 27), date(2027, 11, 27), "HAVFT-210864")
+    text = pypdfium2.PdfDocument(letters[0][1])[0].get_textpage().get_text_range()
+    assert "TOYOTA PRIUS" in text and "AB12 CDE" in text
