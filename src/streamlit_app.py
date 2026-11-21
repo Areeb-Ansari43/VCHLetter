@@ -1028,7 +1028,7 @@ def _largest_embedded_image(data: bytes) -> bytes | None:
         return None
     return None
 
-def _open_image_bytes(data: bytes) -> Image.Image:
+def _open_image_bytes(data: bytes, max_side: int | None = None) -> Image.Image:
     img = Image.open(io.BytesIO(data))
     try:
         img.seek(0)  # first frame of GIF / multi-page TIFF
@@ -1039,8 +1039,12 @@ def _open_image_bytes(data: bytes) -> Image.Image:
         rgba = img.convert("RGBA")
         bg = Image.new("RGB", rgba.size, (255, 255, 255))
         bg.paste(rgba, mask=rgba.split()[-1])
-        return bg
-    return img.convert("RGB")
+        img = bg
+    else:
+        img = img.convert("RGB")
+    if max_side and max(img.size) > max_side:
+        img.thumbnail((max_side, max_side), Image.LANCZOS, reducing_gap=2.0)
+    return img
 
 def _render_pdf_page1(data: bytes) -> Image.Image:
     if pypdfium2 is None:
@@ -1059,7 +1063,7 @@ def _render_pdf_page1(data: bytes) -> Image.Image:
     except Exception as e:
         raise ValueError(f"Invalid or malformed PDF document: {e}")
 
-def load_uploaded_image(uploaded_file) -> Image.Image:
+def load_uploaded_image(uploaded_file, max_side: int | None = None) -> Image.Image:
     """Load any uploaded licence file as an RGB image.
 
     Accepts every common photo format (JPG, PNG, HEIC/HEIF, WEBP, AVIF, BMP,
@@ -1087,7 +1091,7 @@ def load_uploaded_image(uploaded_file) -> Image.Image:
         return _render_pdf_page1(data)
 
     try:
-        return _open_image_bytes(data)
+        return _open_image_bytes(data, max_side)
     except Exception as pil_err:
         if data[:2] == b"PK":
             inner = _largest_embedded_image(data)
@@ -1095,7 +1099,7 @@ def load_uploaded_image(uploaded_file) -> Image.Image:
                 if inner.startswith(b"%PDF"):
                     return _render_pdf_page1(inner)
                 try:
-                    return _open_image_bytes(inner)
+                    return _open_image_bytes(inner, max_side)
                 except Exception:
                     pass
         if cv2 is not None:
@@ -1172,7 +1176,7 @@ def auto_crop_card(img: Image.Image) -> Image.Image:
     return img
 
 def run_ocr(uploaded_file) -> str:
-    img = load_uploaded_image(uploaded_file)
+    img = load_uploaded_image(uploaded_file, max_side=3200)
     img = auto_crop_card(img)
     img = _deskew_and_orient(img)
 
@@ -1357,44 +1361,62 @@ def _azure_payload(img: Image.Image) -> bytes:
 # How often to ask Azure "is it done yet?". The SDK's default is 30 seconds
 # whenever Azure doesn't send a Retry-After header, which made every licence
 # take 30s+ even though Azure finishes in 2-5s.
-AZURE_POLL_SECONDS = 1
+AZURE_POLL_SECONDS = 2
+SCAN_MAX_SIDE = 2600        # photos bigger than this are shrunk first (phone photos are ~4000px)
+SCAN_CONCURRENCY = 2        # licences read at once across the whole server (protects the site)
 
-_AZURE_CLIENTS: dict = {}
-_AZURE_CLIENTS_LOCK = threading.Lock()
+@st.cache_resource(show_spinner=False)
+def _azure_client_store() -> dict:
+    return {"lock": threading.Lock(), "clients": {}}
 
 def _azure_client():
-    """One shared client (keeps the HTTPS connection open between licences)."""
+    """One shared client for the whole server (keeps the HTTPS connection open)."""
     endpoint, key = get_secret("AZURE_DOCINTEL_ENDPOINT"), get_secret("AZURE_DOCINTEL_KEY")
-    cache_key = (id(DocumentIntelligenceClient), endpoint, key)
-    with _AZURE_CLIENTS_LOCK:
-        client = _AZURE_CLIENTS.get(cache_key)
-        if client is None:
-            client = DocumentIntelligenceClient(
-                endpoint=endpoint, credential=AzureKeyCredential(key), polling_interval=AZURE_POLL_SECONDS,
-            )
-            _AZURE_CLIENTS[cache_key] = client
+    store = _azure_client_store()
+    with store["lock"]:
+        entry = store["clients"].get((endpoint, key))
+        if entry and entry[0] is DocumentIntelligenceClient:
+            return entry[1]
+        client = DocumentIntelligenceClient(endpoint=endpoint, credential=AzureKeyCredential(key),
+                                            polling_interval=AZURE_POLL_SECONDS)
+        store["clients"][(endpoint, key)] = (DocumentIntelligenceClient, client)
         return client
 
-def run_ocr_azure(uploaded_file) -> dict:
-    t0 = _time_mod.perf_counter()
-    orig_img = load_uploaded_image(uploaded_file)
-    card_img = auto_crop_card(orig_img)
-    payload = _azure_payload(card_img)
-    t_prep = _time_mod.perf_counter() - t0
+@st.cache_resource(show_spinner=False)
+def _scan_gate():
+    return threading.BoundedSemaphore(SCAN_CONCURRENCY)
 
-    try:
-        t1 = _time_mod.perf_counter()
-        poller = _azure_client().begin_analyze_document(
-            "prebuilt-idDocument",
-            body=payload,
-            content_type="image/jpeg",
-            polling_interval=AZURE_POLL_SECONDS,
-        )
-        result = poller.result(timeout=60)
-        t_azure = _time_mod.perf_counter() - t1
-    except Exception as e:
-        raise ValueError(f"Azure Document Intelligence error: {e}")
-    logging.info("Licence read: prepare %.2fs, Azure %.2fs", t_prep, t_azure)
+def _azure_error_message(e: Exception) -> str:
+    text = str(e)
+    if "429" in text or "Too Many Requests" in text or "rate limit" in text.lower():
+        return "Azure is busy — your Azure plan allows only a few reads per minute. Wait a moment and press Retry."
+    if "401" in text or "Access denied" in text or "subscription key" in text.lower():
+        return "Azure rejected the key — check AZURE_DOCINTEL_KEY in the server secrets."
+    return f"Azure Document Intelligence error: {text[:200]}"
+
+def run_ocr_azure(uploaded_file) -> dict:
+    gate = _scan_gate()
+    t_wait = _time_mod.perf_counter()
+    with gate:
+        t0 = _time_mod.perf_counter()
+        orig_img = load_uploaded_image(uploaded_file, max_side=SCAN_MAX_SIDE)
+        card_img = auto_crop_card(orig_img)
+        payload = _azure_payload(card_img)
+        t_prep = _time_mod.perf_counter() - t0
+        try:
+            t1 = _time_mod.perf_counter()
+            poller = _azure_client().begin_analyze_document(
+                "prebuilt-idDocument",
+                body=payload,
+                content_type="image/jpeg",
+                polling_interval=AZURE_POLL_SECONDS,
+            )
+            result = poller.result(timeout=90)
+            t_azure = _time_mod.perf_counter() - t1
+        except Exception as e:
+            logging.warning("Azure licence read failed after %.1fs: %s", _time_mod.perf_counter() - t0, e)
+            raise ValueError(_azure_error_message(e))
+    logging.info("Licence read: queued %.2fs, prepare %.2fs, Azure %.2fs", t0 - t_wait, t_prep, t_azure)
 
     if not result.documents:
         raise ValueError("Azure couldn't detect an ID document in this photo.")
@@ -1433,7 +1455,7 @@ def run_ocr_azure(uploaded_file) -> dict:
     return out
 
 def extract_signature_crop_fallback(uploaded_file) -> bytes | None:
-    orig = load_uploaded_image(uploaded_file)
+    orig = load_uploaded_image(uploaded_file, max_side=3200)
     card = auto_crop_card(orig)
     if card is orig:
         return None  # card not found: don't guess a signature from the background
@@ -1450,11 +1472,9 @@ def scan_licence(uploaded_file) -> tuple[dict, str]:
     """Scan a licence with the best engine available. Returns (fields, engine)."""
     errors = []
     if azure_ocr_available():
-        try:
-            return run_ocr_azure(uploaded_file), "Azure AI"
-        except Exception as e:
-            logging.warning("Azure licence read failed, falling back to Tesseract: %s", e)
-            errors.append(str(e))
+        # Don't fall back to Tesseract here: on a small server it takes 30-60s
+        # per licence and slows the whole site down. Show Azure's error instead.
+        return run_ocr_azure(uploaded_file), "Azure AI"
     if pytesseract is not None:
         try:
             t0 = _time_mod.perf_counter()
@@ -1465,7 +1485,7 @@ def scan_licence(uploaded_file) -> tuple[dict, str]:
             except Exception:
                 p["signature_bytes"] = None
             p["seconds"] = round(_time_mod.perf_counter() - t0, 1)
-            return p, "Tesseract" + (" (Azure failed)" if errors else "")
+            return p, "Tesseract"
         except Exception as e:
             errors.append(str(e))
     if not errors:
@@ -1871,7 +1891,7 @@ def render_pdf_to_images(pdf_bytes: bytes) -> list[Image.Image]:
 
 PREVIEW_SCALE = 1.6  # ~980px wide pages: sharp on retina phones, quick to send
 
-@functools.lru_cache(maxsize=8)
+@st.cache_resource(show_spinner=False, max_entries=8)
 def _template_preview(base_name: str, size: tuple) -> Image.Image | None:
     path = _find_img(base_name)
     if not path:
@@ -2801,7 +2821,7 @@ if st.session_state.current_page == "audit":
 #  download every permission letter (ZIP, one combined PDF, or one by one).
 # ─────────────────────────────────────────────
 BULK_MAX_FILES = 150
-BULK_WORKERS = 4  # licences read at the same time
+BULK_WORKERS = 2  # licences read at the same time (the server-wide gate also applies)
 
 def _scan_one(name: str, data: bytes) -> dict:
     """Read one licence (runs in a worker thread)."""
@@ -2818,7 +2838,8 @@ def _scan_one(name: str, data: bytes) -> dict:
         return {"name": full_name, "licence": (p.get("licence") or "").upper(), "address": address,
                 "dob": p.get("dob", ""), "status": status, "engine": engine}
     except Exception as e:
-        return {"name": "", "licence": "", "address": "", "dob": "", "status": f"❌ Couldn't read: {str(e)[:80]}", "engine": ""}
+        # Keep the file so it can be retried without uploading it again.
+        return {"name": "", "licence": "", "address": "", "dob": "", "status": f"❌ {str(e)[:120]}", "engine": "", "_data": data}
 
 def bulk_permission_letters(rows: list[dict], doc_date: date, start: date, end: date, policy: str) -> list[tuple[str, bytes, dict]]:
     """Build one permission letter per row. Returns [(file_name, pdf_bytes, row)]."""
@@ -2878,6 +2899,7 @@ def _bulk_row(res: dict, reg: str = "", make_model: str = "") -> dict:
         "make_model": make_model or (car["model"] if car else ""),
         "status": res.get("status", ""),
         "file": res.get("file", ""),
+        "_data": res.get("_data"),   # only set when the licence couldn't be read
     }
 
 def _bulk_bump():
@@ -3018,6 +3040,16 @@ def render_bulk_page():
             reg_typed = str(ss.get(f"bulk_reg_{nonce}") or "").strip()
             if reg_typed and not find_fleet_vehicle(reg_typed):
                 st.caption("That reg isn't in the fleet list — type the make & model yourself.")
+            if pending.get("_data"):
+                if st.button("Try reading it again", key=f"bulk_retry_one_{nonce}", icon=":material/refresh:"):
+                    with st.spinner("Reading again…"):
+                        res = _scan_one(pending["file"], pending["_data"])
+                    res["file"] = pending["file"]
+                    ss.bulk_pending = res
+                    ss[f"bulk_name_{nonce}"] = res["name"]
+                    ss[f"bulk_lic_{nonce}"] = res["licence"]
+                    ss[f"bulk_addr_{nonce}"] = res["address"]
+                    st.rerun()
             b1, b2 = st.columns([3, 1])
             with b1:
                 st.button("Add to list", key=f"bulk_add_{nonce}", type="primary", icon=":material/person_add:",
@@ -3068,6 +3100,17 @@ def render_bulk_page():
         m3.metric("Letters ready", len(ready))
         if dupes:
             st.warning("The same car is entered for more than one driver: " + ", ".join(dupes), icon=":material/warning:")
+        failed = [r for r in rows if r.get("_data")]
+        if failed and st.button(f"Retry {len(failed)} licence{'s' if len(failed) != 1 else ''} that couldn't be read",
+                                key="bulk_retry_failed", icon=":material/refresh:"):
+            bar = st.progress(0.0, text="Reading again…")
+            for i, r in enumerate(failed, 1):
+                res = _scan_one(r["file"], r["_data"])
+                r.update({"name": res["name"] or r["name"], "licence": res["licence"] or r["licence"],
+                          "address": res["address"] or r["address"], "status": res["status"], "_data": res.get("_data")})
+                bar.progress(i / len(failed), text=f"Read {i} of {len(failed)}")
+            _bulk_bump()
+            st.rerun()
         if st.button("Clear the list", key="bulk_clear", type="tertiary", icon=":material/delete_sweep:"):
             ss.bulk_list = []
             ss.bulk_pending = None

@@ -879,7 +879,7 @@ def test_md25_dcx_in_fleet():
     assert v["model"] == "FORD TOURNEO CUSTOM" and v["rent"] == 430
     assert find_fleet_vehicle("md25dcx")["reg"] == "MD25 DCX"
 
-def test_azure_polls_every_second_and_reuses_client():
+def test_azure_polls_quickly_and_reuses_client():
     import streamlit_app as sa
     mock_doc = MagicMock(); mock_doc.fields = {}
     res = MagicMock(); res.documents = [mock_doc]; res.pages = []; res.content = ""
@@ -892,6 +892,22 @@ def test_azure_polls_every_second_and_reuses_client():
             buf = io.BytesIO(); Image.new("RGB", (800, 500), "white").save(buf, format="JPEG"); buf.name = "l.jpg"
             out = sa.run_ocr_azure(buf)
     assert cls.call_count == 1                                    # one shared client
-    assert cls.call_args.kwargs["polling_interval"] == 1
-    assert client.begin_analyze_document.call_args.kwargs["polling_interval"] == 1
+    assert cls.call_args.kwargs["polling_interval"] == sa.AZURE_POLL_SECONDS == 2
+    assert client.begin_analyze_document.call_args.kwargs["polling_interval"] == 2
     assert isinstance(out["seconds"], float)
+
+
+def test_big_photos_are_shrunk_for_scanning_and_azure_errors_are_clear():
+    import streamlit_app as sa
+    buf = io.BytesIO(); Image.new("RGB", (4032, 3024), "white").save(buf, format="JPEG"); buf.name = "p.jpg"
+    assert sa.load_uploaded_image(buf, max_side=2600).size == (2600, 1950)
+    assert sa.load_uploaded_image(buf).size == (4032, 3024)
+    assert "busy" in sa._azure_error_message(Exception("(429) Too Many Requests"))
+    assert "key" in sa._azure_error_message(Exception("(401) Access denied"))
+
+def test_failed_read_keeps_file_for_retry():
+    import streamlit_app as sa
+    with patch("streamlit_app.scan_licence", side_effect=ValueError("Azure is busy")):
+        r = sa._scan_one("b.jpg", b"bytes")
+    assert r["_data"] == b"bytes"
+    assert sa._bulk_row(r)["_data"] == b"bytes"
