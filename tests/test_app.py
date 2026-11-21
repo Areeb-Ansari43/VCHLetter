@@ -792,3 +792,44 @@ def test_contract_prints_new_bank_details():
     text = pdf[0].get_textpage().get_text_range()
     assert "ACC: 43605086" in text
     assert "SORT CODE: 20 42 73" in text
+
+def test_bulk_permission_letters_zip_and_combined():
+    import zipfile, pypdfium2
+    from streamlit_app import bulk_permission_letters, _zip_letters, _combine_letters, INSURANCE_POLICY_NO
+    rows = [
+        {"name": "John Smith", "licence": "SMITH901019J99AB", "address": "1 HIGH ST, LONDON, SW1A 1AA", "reg": "KN73 XLB"},
+        {"name": "Jane Doe", "licence": "DOE99901019J99AB", "address": "2 LOW RD, E1 6AN", "reg": "EF70 ZYB"},
+        {"name": "John Smith", "licence": "X", "address": "", "reg": "KN73 XLB"},  # duplicate name+car
+    ]
+    letters = bulk_permission_letters(rows, date(2026, 11, 21), date(2026, 11, 27), date(2027, 11, 27), INSURANCE_POLICY_NO)
+    names = [f for f, _, _ in letters]
+    assert names[0] == "Permission - John Smith - KN73XLB.pdf"
+    assert names[2] == "Permission - John Smith - KN73XLB (2).pdf"
+    text = pypdfium2.PdfDocument(letters[1][1])[0].get_textpage().get_text_range()
+    for expected in ("JANE DOE", "EF70 ZYB", "HYUNDAI IONIQ", "27/11/2026", "27/11/2027", INSURANCE_POLICY_NO):
+        assert expected in text
+    with zipfile.ZipFile(io.BytesIO(_zip_letters(letters))) as zf:
+        assert sorted(zf.namelist()) == sorted(names)
+    assert len(pypdfium2.PdfDocument(_combine_letters(letters))) == 3
+
+def test_bulk_scan_one_handles_success_and_failure():
+    import streamlit_app
+    fake = {"forename": "MR JOHN", "surname": "SMITH", "licence": "smith901019j99ab", "address": "1 HIGH ST", "postcode": "SW1A 1AA"}
+    with patch("streamlit_app.scan_licence", return_value=(fake, "Azure AI")):
+        r = streamlit_app._scan_one("a.jpg", b"x")
+    assert (r["name"], r["licence"], r["address"]) == ("John Smith", "SMITH901019J99AB", "1 HIGH ST, SW1A 1AA")
+    assert r["status"].startswith("✅")
+    with patch("streamlit_app.scan_licence", side_effect=ValueError("blurry")):
+        r = streamlit_app._scan_one("b.jpg", b"x")
+    assert r["status"].startswith("❌") and r["name"] == ""
+
+def test_new_insurance_defaults():
+    from streamlit_app import INSURANCE_POLICY_NO, PERMISSION_START_DATE, PERMISSION_END_DATE, form_defaults
+    assert INSURANCE_POLICY_NO == "HAVFT-21O864"
+    assert (PERMISSION_START_DATE, PERMISSION_END_DATE) == (date(2026, 11, 27), date(2027, 11, 27))
+    d = form_defaults()
+    assert d["p_form_ins"] == INSURANCE_POLICY_NO and d["p_form_end"] == PERMISSION_END_DATE
+
+def test_parse_licence_keeps_house_number():
+    p = parse_licence("1. SMITH 2. JOHN 3. 01.01.1990 4b. 01.01.2030 5. SMITH901010JP9AB 8. 12 HIGH STREET, LONDON, SW1A 1AA 9. AM")
+    assert p["address"].startswith("12 HIGH STREET")

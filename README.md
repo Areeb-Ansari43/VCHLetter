@@ -11,6 +11,9 @@ Main file: `streamlit_app.py` (it runs `src/streamlit_app.py`).
   Picking a car fills reg, make, model, rent and deposit on both documents.
 - **Live document preview** – updates while you type (0.3 s after you pause).
   Name, licence, address, vehicle and dates are shared between both documents.
+- **Bulk Upload** – upload many licences at once (e.g. 75), they're read 4 at a time, then
+  pick a car for each driver in the table and download every permission letter as a ZIP,
+  one combined PDF for printing, or one by one.
 - **Audit logs** – searchable history with links to stored PDFs.
 
 ## Secrets (Streamlit Cloud → App settings → Secrets)

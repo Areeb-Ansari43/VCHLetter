@@ -1472,7 +1472,8 @@ def parse_licence(raw: str) -> dict:
     postcode = extract_postcode(raw_8) or extract_postcode(raw_9) or extract_postcode(blob_proc)
     addr_clean = strip_address_noise(raw_8.replace(licence, ""))
     if postcode: addr_clean = re.sub(re.escape(postcode), "", addr_clean, flags=re.I)
-    addr_clean = re.sub(r"^[0-9A-Z]{1,2}\b\.?\s*", "", addr_clean.strip()).strip(", ").strip()
+    # Drop a leftover field marker such as "8." — but keep house numbers like "12 HIGH ST".
+    addr_clean = re.sub(r"^[0-9A-Z]{1,2}\.\s*", "", addr_clean.strip()).strip(", ").strip()
     addr_clean = normalize_address(addr_clean)
 
     return {"surname": surname, "forename": forename, "dob": dob, "expiry": expiry, "licence": licence, "address": addr_clean, "postcode": postcode}
@@ -2348,6 +2349,10 @@ if not st.session_state.authenticated:
 #  SESSION STATE: one source of truth for every form field
 # ─────────────────────────────────────────────
 DEFAULT_HIRE_END_DATE = date(2026, 11, 27)
+# Current insurance policy and its period (used by the permission letters).
+INSURANCE_POLICY_NO = "HAVFT-21O864"
+PERMISSION_START_DATE = date(2026, 11, 27)
+PERMISSION_END_DATE = date(2027, 11, 27)
 MANUAL_VEHICLE = "__manual__"
 MAX_UPLOAD_SIZE_BYTES = 25 * 1024 * 1024  # 25 MB
 
@@ -2360,8 +2365,8 @@ def form_defaults() -> dict:
     now_t = get_uk_now().time().replace(second=0, microsecond=0)
     return {
         # Permission letter
-        "p_form_date": today, "p_form_ins": "HAVFL-000211", "p_form_reg": "", "p_form_mod": "",
-        "p_form_name": "", "p_form_lic": "", "p_form_start": today, "p_form_end": default_hire_end(today),
+        "p_form_date": today, "p_form_ins": INSURANCE_POLICY_NO, "p_form_reg": "", "p_form_mod": "",
+        "p_form_name": "", "p_form_lic": "", "p_form_start": PERMISSION_START_DATE, "p_form_end": PERMISSION_END_DATE,
         "p_form_addr": "", "perm_document_name": "Permission Letter",
         # Contract
         "c_form_no": build_default_contract_no("", ""), "c_form_name": "", "c_form_addr": "", "c_form_post": "",
@@ -2584,14 +2589,15 @@ def apply_ocr_results_to_session_state(p: dict):
 init_state()
 query_page = st.query_params.get("page", "workspace")
 if "current_page" not in st.session_state:
-    st.session_state.current_page = "audit" if query_page == "audit" else "workspace"
+    st.session_state.current_page = query_page if query_page in ("audit", "bulk") else "workspace"
 
-NAV_LABELS = {"workspace": "Workspace", "audit": "Audit Logs"}
+NAV_LABELS = {"workspace": "Workspace", "bulk": "Bulk Upload", "audit": "Audit Logs"}
+NAV_PAGES = {v: k for k, v in NAV_LABELS.items()}
 
 def _on_nav_change():
     choice = st.session_state.get("nav_choice")
     if choice:
-        page = "audit" if choice == "Audit Logs" else "workspace"
+        page = NAV_PAGES.get(choice, "workspace")
         st.session_state.current_page = page
         st.query_params["page"] = page
     else:
@@ -2600,7 +2606,8 @@ def _on_nav_change():
 st.session_state.nav_choice = NAV_LABELS[st.session_state.current_page]
 
 with st.container(horizontal=True, vertical_alignment="center", gap="small"):
-    sub = "Document history & security log" if st.session_state.current_page == "audit" else "Permission letters & hire contracts"
+    sub = {"audit": "Document history & security log", "bulk": "Bulk permission letters"}.get(
+        st.session_state.current_page, "Permission letters & hire contracts")
     st.html(f"""
     <div class="fa-brand">
       <div class="fa-brand-mark">{vch_mark_svg(30)}</div>
@@ -2608,9 +2615,9 @@ with st.container(horizontal=True, vertical_alignment="center", gap="small"):
     </div>""", width="content")
     st.space("stretch")
     st.segmented_control(
-        "Page", ["Workspace", "Audit Logs"], key="nav_choice", label_visibility="collapsed",
+        "Page", list(NAV_LABELS.values()), key="nav_choice", label_visibility="collapsed",
         on_change=_on_nav_change, required=True,
-        format_func=lambda o: ("🗂️ " if o == "Workspace" else "🧾 ") + o,
+        format_func=lambda o: {"Workspace": "🗂️ ", "Bulk Upload": "📚 ", "Audit Logs": "🧾 "}.get(o, "") + o,
     )
     if st.button("Log out", key="top_logout_btn", icon=":material/logout:"):
         add_audit_log("Signed Out", details=st.session_state.get("user_email", ""))
@@ -2637,6 +2644,7 @@ EVENT_ICONS = {
     "Email Code Sent": "📧",
     "Account Created": "👤",
     "Password Reset": "🔑",
+    "Bulk Licences Scanned": "📚",
 }
 
 def _fmt_uk(ts: str) -> str:
@@ -2754,6 +2762,259 @@ def render_audit_page():
 
 if st.session_state.current_page == "audit":
     render_audit_page()
+    st.stop()
+
+# ─────────────────────────────────────────────
+#  BULK PERMISSION LETTERS
+#  Upload many licences → read them all → pick a car per driver →
+#  download every permission letter (ZIP, one combined PDF, or one by one).
+# ─────────────────────────────────────────────
+BULK_MAX_FILES = 150
+BULK_WORKERS = 4  # licences read at the same time
+
+def _fleet_label(reg: str) -> str:
+    v = FLEET_BY_REG.get(reg)
+    return f"{reg} · {v['model']}" if v else (reg or "")
+
+def _scan_one(name: str, data: bytes) -> dict:
+    """Read one licence (runs in a worker thread)."""
+    buf = io.BytesIO(data)
+    buf.name = name
+    try:
+        p, engine = scan_licence(buf)
+        full_name = format_driver_name_for_display(f"{p.get('forename', '')} {p.get('surname', '')}".strip())
+        address = get_full_address(p.get("address", ""), p.get("postcode", ""))
+        missing = [lbl for k, lbl in (("name", "name"), ("licence", "licence no"), ("address", "address"))
+                   if not (full_name if k == "name" else address if k == "address" else p.get(k))]
+        status = "✅ Read" if not missing else "⚠️ Check: " + ", ".join(missing)
+        return {"name": full_name, "licence": (p.get("licence") or "").upper(), "address": address,
+                "dob": p.get("dob", ""), "status": status, "engine": engine}
+    except Exception as e:
+        return {"name": "", "licence": "", "address": "", "dob": "", "status": f"❌ Couldn't read: {str(e)[:80]}", "engine": ""}
+
+def bulk_permission_letters(rows: list[dict], doc_date: date, start: date, end: date, policy: str) -> list[tuple[str, bytes, dict]]:
+    """Build one permission letter per row. Returns [(file_name, pdf_bytes, row)]."""
+    out, used = [], set()
+    for r in rows:
+        car = FLEET_BY_REG.get(r["reg"]) or {}
+        name = str(r.get("name") or "").strip()
+        pdf = generate_permission_letter({
+            "date": doc_date.strftime("%d/%m/%Y"),
+            "insurance_policy": policy.strip().upper(),
+            "registration": format_uk_reg(r["reg"]),
+            "make_model": car.get("model", ""),
+            "driver_name": name.upper(),
+            "address": normalize_address(r.get("address", "")),
+            "license_no": str(r.get("licence") or "").strip().upper(),
+            "start_date": start.strftime("%d/%m/%Y"),
+            "end_date": end.strftime("%d/%m/%Y"),
+        })
+        base = build_default_doc_name("Permission", name, r["reg"], "Permission Letter")
+        fname, n = f"{base}.pdf", 2
+        while fname.lower() in used:
+            fname, n = f"{base} ({n}).pdf", n + 1
+        used.add(fname.lower())
+        out.append((fname, pdf, r))
+    return out
+
+def _zip_letters(letters) -> bytes:
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        for fname, pdf, _ in letters:
+            zf.writestr(fname, pdf)
+    return buf.getvalue()
+
+def _combine_letters(letters) -> bytes | None:
+    if pypdfium2 is None:
+        return None
+    merged = pypdfium2.PdfDocument.new()
+    for _, pdf, _ in letters:
+        merged.import_pages(pypdfium2.PdfDocument(pdf))
+    buf = io.BytesIO()
+    merged.save(buf)
+    return buf.getvalue()
+
+def render_bulk_page():
+    st.session_state.setdefault("bulk_results", {})   # file hash -> scan result
+    st.session_state.setdefault("bulk_uploader_nonce", 0)
+
+    with st.container(border=True):
+        st.html('<div class="fa-section-title">1 · Upload the licences</div>')
+        files = st.file_uploader(
+            "Driver's licences — photos, scans or PDFs (front side). You can select them all at once.",
+            type=None, accept_multiple_files=True, max_upload_size=25,
+            key=f"bulk_uploader_{st.session_state.bulk_uploader_nonce}",
+        ) or []
+        if len(files) > BULK_MAX_FILES:
+            st.warning(f"Only the first {BULK_MAX_FILES} files are used.")
+            files = files[:BULK_MAX_FILES]
+
+        entries = []
+        for f in files:
+            data = f.getvalue()
+            entries.append((hashlib.md5(data).hexdigest(), f.name, data))
+        results = st.session_state.bulk_results
+        todo = [(h, n, d) for h, n, d in entries if h not in results]
+
+        c1, c2 = st.columns([3, 1], vertical_alignment="center")
+        with c1:
+            if entries:
+                st.caption(f"{len(entries)} licence{'s' if len(entries) != 1 else ''} uploaded · "
+                           f"{len(entries) - len(todo)} read · {len(todo)} waiting")
+            else:
+                st.caption("Tip: on a phone, choose several photos from your library in one go.")
+        with c2:
+            if st.button("Start again", key="bulk_reset", icon=":material/restart_alt:", width="stretch", disabled=not entries and not results):
+                st.session_state.bulk_results = {}
+                st.session_state.bulk_uploader_nonce += 1
+                for k in ("bulk_letters", "bulk_editor", "bulk_table_sig"):
+                    st.session_state.pop(k, None)
+                st.rerun()
+
+        if todo:
+            if not azure_ocr_available() and pytesseract is None:
+                st.error("No scanner is configured (add the Azure Document Intelligence secrets).")
+            elif st.button(f"Read {len(todo)} licence{'s' if len(todo) != 1 else ''}", key="bulk_scan",
+                           type="primary", icon=":material/document_scanner:", width="stretch"):
+                bar = st.progress(0.0, text="Reading licences…")
+                done = 0
+                from concurrent.futures import ThreadPoolExecutor, as_completed
+                with ThreadPoolExecutor(max_workers=BULK_WORKERS) as pool:
+                    futures = {pool.submit(_scan_one, n, d): (h, n) for h, n, d in todo}
+                    for fut in as_completed(futures):
+                        h, n = futures[fut]
+                        res = fut.result()
+                        res["file"] = n
+                        results[h] = res
+                        done += 1
+                        bar.progress(done / len(todo), text=f"Read {done} of {len(todo)} · {n}")
+                ok = sum(1 for h, _, _ in todo if results[h]["status"].startswith("✅"))
+                add_audit_log("Bulk Licences Scanned", details=f"{len(todo)} licences · {ok} fully read")
+                st.session_state.pop("bulk_letters", None)
+                st.rerun()
+
+    rows = [dict(results[h], hash=h) for h, _, _ in entries if h in results]
+    if not rows:
+        return
+
+    with st.container(border=True):
+        st.html('<div class="fa-section-title">2 · Check the details and choose a car for each driver</div>')
+        st.caption("Click any cell to correct it. Pick the vehicle from the list — type part of the registration to search. "
+                   "Untick a driver to leave them out.")
+
+        import pandas as pd
+        table_sig = tuple(r["hash"] for r in rows)
+        if st.session_state.get("bulk_table_sig") != table_sig:
+            # New set of licences: start a fresh table (keeps nothing stale).
+            st.session_state.bulk_table_sig = table_sig
+            st.session_state.pop("bulk_editor", None)
+            st.session_state.bulk_base = pd.DataFrame([{
+                "Include": True,
+                "Driver Name": r["name"],
+                "Licence No": r["licence"],
+                "Address": r["address"],
+                "Vehicle Reg": None,
+                "Status": r["status"],
+                "File": r["file"],
+            } for r in rows])
+
+        reg_options = [v["reg"] for v in FLEET_VEHICLES]
+        edited = st.data_editor(
+            st.session_state.bulk_base,
+            key="bulk_editor",
+            hide_index=True,
+            width="stretch",
+            height=min(720, 40 + 35 * len(rows)),
+            num_rows="fixed",
+            placeholder="—",
+            disabled=["Status", "File"],
+            column_config={
+                "Include": st.column_config.CheckboxColumn("✓", width="small"),
+                "Driver Name": st.column_config.TextColumn(width="medium"),
+                "Licence No": st.column_config.TextColumn(width="medium"),
+                "Address": st.column_config.TextColumn(width="large"),
+                "Vehicle Reg": st.column_config.SelectboxColumn(
+                    "Vehicle Reg", options=reg_options, format_func=_fleet_label, width="medium"),
+                "Status": st.column_config.TextColumn(width="small"),
+                "File": st.column_config.TextColumn(width="small"),
+            },
+        )
+
+        chosen = edited[edited["Include"] == True]  # noqa: E712
+        with_car = chosen[chosen["Vehicle Reg"].notna() & (chosen["Vehicle Reg"] != "")]
+        dupes = with_car["Vehicle Reg"][with_car["Vehicle Reg"].duplicated(keep=False)].unique().tolist()
+        no_name = int((chosen["Driver Name"].fillna("").str.strip() == "").sum())
+
+        m1, m2, m3 = st.columns(3)
+        m1.metric("Drivers", len(chosen))
+        m2.metric("Cars chosen", f"{len(with_car)} / {len(chosen)}")
+        m3.metric("Letters ready", len(with_car[with_car["Driver Name"].fillna("").str.strip() != ""]))
+        if dupes:
+            st.warning("The same car is chosen for more than one driver: " + ", ".join(dupes), icon=":material/warning:")
+        if no_name:
+            st.warning(f"{no_name} included driver(s) have no name yet — fill it in or untick them.", icon=":material/warning:")
+
+    with st.container(border=True):
+        st.html('<div class="fa-section-title">3 · Letter settings</div>')
+        s1, s2, s3, s4 = st.columns([1.3, 1, 1, 1])
+        with s1:
+            policy = st.text_input("Insurance Policy No", value=INSURANCE_POLICY_NO, key="bulk_policy")
+        with s2:
+            doc_date = st.date_input("Letter date", value=get_uk_now().date(), format="DD/MM/YYYY", key="bulk_date")
+        with s3:
+            start = st.date_input("Hire start", value=PERMISSION_START_DATE, format="DD/MM/YYYY", key="bulk_start")
+        with s4:
+            end = st.date_input("Hire end", value=PERMISSION_END_DATE, format="DD/MM/YYYY", key="bulk_end")
+
+        ready = [
+            {"name": r["Driver Name"], "licence": r["Licence No"], "address": r["Address"], "reg": r["Vehicle Reg"]}
+            for _, r in with_car.iterrows() if str(r["Driver Name"] or "").strip()
+        ]
+        if st.button(f"Create {len(ready)} permission letter{'s' if len(ready) != 1 else ''}", key="bulk_generate",
+                     type="primary", icon=":material/print:", width="stretch", disabled=not ready):
+            with st.spinner(f"Creating {len(ready)} letters…"):
+                letters = bulk_permission_letters(ready, doc_date, start, end, policy)
+                for fname, pdf, r in letters:
+                    base = fname[:-4]
+                    sp = sync_to_supabase(pdf, base, "Permission Letter", driver_ref=str(r["name"]).upper(), vehicle_reg=format_uk_reg(r["reg"]))
+                    add_audit_log("Permission Letter Generated",
+                                  details=f"Driver: {str(r['name']).upper()}, Reg: {format_uk_reg(r['reg'])} (bulk)",
+                                  doc_name=fname, file_path=f"driver_documents/{sp}" if sp else "")
+                st.session_state.bulk_letters = {
+                    "letters": [(f, p) for f, p, _ in letters],
+                    "zip": _zip_letters(letters),
+                    "combined": _combine_letters(letters),
+                }
+            notify(f"{len(letters)} permission letters created.", "success")
+
+    bundle = st.session_state.get("bulk_letters")
+    if bundle:
+        with st.container(border=True):
+            st.html(f'<div class="fa-section-title">4 · Download ({len(bundle["letters"])} letters)</div>')
+            stamp = get_uk_now().strftime("%Y-%m-%d")
+            d1, d2 = st.columns(2)
+            with d1:
+                st.download_button("Download all (ZIP, one PDF each)", data=bundle["zip"],
+                                   file_name=f"Permission Letters {stamp}.zip", mime="application/zip",
+                                   key="bulk_dl_zip", type="primary", width="stretch",
+                                   icon=":material/folder_zip:", on_click="ignore")
+            with d2:
+                if bundle.get("combined"):
+                    st.download_button("Download all as one PDF (for printing)", data=bundle["combined"],
+                                       file_name=f"Permission Letters {stamp}.pdf", mime="application/pdf",
+                                       key="bulk_dl_combined", width="stretch",
+                                       icon=":material/picture_as_pdf:", on_click="ignore")
+            with st.expander("Download one at a time", icon=":material/list:"):
+                for i, (fname, pdf) in enumerate(bundle["letters"]):
+                    a, b = st.columns([4, 1], vertical_alignment="center")
+                    a.write(fname[:-4])
+                    with b:
+                        st.download_button("PDF", data=pdf, file_name=fname, mime="application/pdf",
+                                           key=f"bulk_dl_{i}", width="stretch",
+                                           icon=":material/download:", on_click="ignore")
+
+if st.session_state.current_page == "bulk":
+    render_bulk_page()
     st.stop()
 
 # ─────────────────────────────────────────────
