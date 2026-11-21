@@ -826,7 +826,9 @@ def test_bulk_scan_one_handles_success_and_failure():
 def test_new_insurance_defaults():
     from streamlit_app import INSURANCE_POLICY_NO, PERMISSION_START_DATE, PERMISSION_END_DATE, form_defaults
     assert INSURANCE_POLICY_NO == "HAVFT-210864"
-    assert (PERMISSION_START_DATE, PERMISSION_END_DATE) == (date(2026, 11, 27), date(2027, 11, 27))
+    from streamlit_app import PERMISSION_LETTER_DATE
+    assert (PERMISSION_LETTER_DATE, PERMISSION_START_DATE, PERMISSION_END_DATE) == (date(2026, 11, 25), date(2026, 11, 25), date(2027, 11, 27))
+    assert form_defaults()["p_form_date"] == date(2026, 11, 25)
     d = form_defaults()
     assert d["p_form_ins"] == INSURANCE_POLICY_NO and d["p_form_end"] == PERMISSION_END_DATE
 

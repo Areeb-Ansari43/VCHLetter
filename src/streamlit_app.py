@@ -2353,7 +2353,8 @@ if not st.session_state.authenticated:
 DEFAULT_HIRE_END_DATE = date(2026, 11, 27)
 # Current insurance policy and its period (used by the permission letters).
 INSURANCE_POLICY_NO = "HAVFT-210864"
-PERMISSION_START_DATE = date(2026, 11, 27)
+PERMISSION_LETTER_DATE = date(2026, 11, 25)
+PERMISSION_START_DATE = date(2026, 11, 25)
 PERMISSION_END_DATE = date(2027, 11, 27)
 MANUAL_VEHICLE = "__manual__"
 MAX_UPLOAD_SIZE_BYTES = 25 * 1024 * 1024  # 25 MB
@@ -2367,7 +2368,7 @@ def form_defaults() -> dict:
     now_t = get_uk_now().time().replace(second=0, microsecond=0)
     return {
         # Permission letter
-        "p_form_date": today, "p_form_ins": INSURANCE_POLICY_NO, "p_form_reg": "", "p_form_mod": "",
+        "p_form_date": PERMISSION_LETTER_DATE, "p_form_ins": INSURANCE_POLICY_NO, "p_form_reg": "", "p_form_mod": "",
         "p_form_name": "", "p_form_lic": "", "p_form_start": PERMISSION_START_DATE, "p_form_end": PERMISSION_END_DATE,
         "p_form_addr": "", "perm_document_name": "Permission Letter",
         # Contract
@@ -3053,7 +3054,7 @@ def render_bulk_page():
         with s1:
             policy = st.text_input("Insurance Policy No", value=INSURANCE_POLICY_NO, key="bulk_policy")
         with s2:
-            doc_date = st.date_input("Letter date", value=get_uk_now().date(), format="DD/MM/YYYY", key="bulk_date")
+            doc_date = st.date_input("Letter date", value=PERMISSION_LETTER_DATE, format="DD/MM/YYYY", key="bulk_date")
         with s3:
             start = st.date_input("Hire start", value=PERMISSION_START_DATE, format="DD/MM/YYYY", key="bulk_start")
         with s4:
