@@ -825,7 +825,7 @@ def test_bulk_scan_one_handles_success_and_failure():
 
 def test_new_insurance_defaults():
     from streamlit_app import INSURANCE_POLICY_NO, PERMISSION_START_DATE, PERMISSION_END_DATE, form_defaults
-    assert INSURANCE_POLICY_NO == "HAVFT-210864"
+    assert INSURANCE_POLICY_NO == "FPH102347"
     from streamlit_app import PERMISSION_LETTER_DATE
     assert (PERMISSION_LETTER_DATE, PERMISSION_START_DATE, PERMISSION_END_DATE) == (date(2026, 11, 25), date(2026, 11, 25), date(2027, 11, 27))
     assert form_defaults()["p_form_date"] == date(2026, 11, 25)
@@ -857,7 +857,7 @@ def test_bulk_letters_use_custom_make_model():
     import pypdfium2
     from streamlit_app import bulk_permission_letters
     letters = bulk_permission_letters([{"name": "A B", "licence": "X", "address": "", "reg": "AB12 CDE", "make_model": "TOYOTA PRIUS"}],
-                                      date(2026, 11, 21), date(2026, 11, 27), date(2027, 11, 27), "HAVFT-210864")
+                                      date(2026, 11, 21), date(2026, 11, 27), date(2027, 11, 27), "FPH102347")
     text = pypdfium2.PdfDocument(letters[0][1])[0].get_textpage().get_text_range()
     assert "TOYOTA PRIUS" in text and "AB12 CDE" in text
 

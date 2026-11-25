@@ -2400,7 +2400,7 @@ if not st.session_state.authenticated:
 # ─────────────────────────────────────────────
 DEFAULT_HIRE_END_DATE = date(2026, 11, 27)
 # Current insurance policy and its period (used by the permission letters).
-INSURANCE_POLICY_NO = "HAVFT-210864"
+INSURANCE_POLICY_NO = "FPH102347"
 PERMISSION_LETTER_DATE = date(2026, 11, 25)
 PERMISSION_START_DATE = date(2026, 11, 25)
 PERMISSION_END_DATE = date(2027, 11, 27)
