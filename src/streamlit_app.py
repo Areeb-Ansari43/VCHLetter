@@ -768,7 +768,7 @@ FLEET_VEHICLES = [
     {"reg": "YF22 UXC", "make": "MG", "model_name": "5 EV", "model": "MG 5 EV", "category": "MG", "fuel": "Electric", "year": 2022, "rent": 200, "deposit": 500, "miles": 5000, "term": "6 Weeks"},
     {"reg": "YF22 UXY", "make": "MG", "model_name": "5 EV", "model": "MG 5 EV", "category": "MG", "fuel": "Electric", "year": 2022, "rent": 200, "deposit": 500, "miles": 5000, "term": "6 Weeks"},
     {"reg": "YG71 LCZ", "make": "MG", "model_name": "5 EV", "model": "MG 5 EV", "category": "MG", "fuel": "Electric", "year": 2021, "rent": 200, "deposit": 500, "miles": 5000, "term": "6 Weeks"},
-    {"reg": "YH76Z LWF", "make": "MG", "model_name": "S9", "model": "MG S9", "category": "MG", "fuel": "Plug-in-Hybrid", "year": 2026, "rent": 300, "deposit": 500, "miles": 5000, "term": "6 Weeks"},
+    {"reg": "YH76 ZWF", "make": "MG", "model_name": "S9", "model": "MG S9", "category": "MG", "fuel": "Plug-in-Hybrid", "year": 2026, "rent": 300, "deposit": 500, "miles": 5000, "term": "6 Weeks"},
     {"reg": "MD25 AYY", "make": "FORD", "model_name": "TOURNEO CUSTOM", "model": "FORD TOURNEO CUSTOM", "category": "Ford", "fuel": "Electric", "year": 2025, "rent": 430, "deposit": 500, "miles": 5000, "term": "6 Weeks"},
     {"reg": "MD25 DDZ", "make": "FORD", "model_name": "TOURNEO CUSTOM", "model": "FORD TOURNEO CUSTOM", "category": "Ford", "fuel": "Electric", "year": 2025, "rent": 430, "deposit": 500, "miles": 5000, "term": "6 Weeks"},
     {"reg": "MD25 DCX", "make": "FORD", "model_name": "TOURNEO CUSTOM", "model": "FORD TOURNEO CUSTOM", "category": "Ford", "fuel": "Electric", "year": 2025, "rent": 430, "deposit": 500, "miles": 5000, "term": "6 Weeks"},
@@ -2403,7 +2403,7 @@ DEFAULT_HIRE_END_DATE = date(2026, 11, 27)
 INSURANCE_POLICY_NO = "FPH102347"
 PERMISSION_LETTER_DATE = date(2026, 11, 25)
 PERMISSION_START_DATE = date(2026, 11, 25)
-PERMISSION_END_DATE = date(2027, 11, 27)
+PERMISSION_END_DATE = date(2027, 11, 26)
 MANUAL_VEHICLE = "__manual__"
 MAX_UPLOAD_SIZE_BYTES = 25 * 1024 * 1024  # 25 MB
 

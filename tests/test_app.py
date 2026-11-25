@@ -827,7 +827,7 @@ def test_new_insurance_defaults():
     from streamlit_app import INSURANCE_POLICY_NO, PERMISSION_START_DATE, PERMISSION_END_DATE, form_defaults
     assert INSURANCE_POLICY_NO == "FPH102347"
     from streamlit_app import PERMISSION_LETTER_DATE
-    assert (PERMISSION_LETTER_DATE, PERMISSION_START_DATE, PERMISSION_END_DATE) == (date(2026, 11, 25), date(2026, 11, 25), date(2027, 11, 27))
+    assert (PERMISSION_LETTER_DATE, PERMISSION_START_DATE, PERMISSION_END_DATE) == (date(2026, 11, 25), date(2026, 11, 25), date(2027, 11, 26))
     assert form_defaults()["p_form_date"] == date(2026, 11, 25)
     d = form_defaults()
     assert d["p_form_ins"] == INSURANCE_POLICY_NO and d["p_form_end"] == PERMISSION_END_DATE
@@ -911,3 +911,11 @@ def test_failed_read_keeps_file_for_retry():
         r = sa._scan_one("b.jpg", b"bytes")
     assert r["_data"] == b"bytes"
     assert sa._bulk_row(r)["_data"] == b"bytes"
+
+def test_mg_s9_reg_and_end_date():
+    from streamlit_app import FLEET_BY_REG, find_fleet_vehicle, PERMISSION_END_DATE
+    v = FLEET_BY_REG["YH76 ZWF"]
+    assert v["model"] == "MG S9" and v["rent"] == 300
+    assert "YH76Z LWF" not in FLEET_BY_REG
+    assert find_fleet_vehicle("yh76zwf")["reg"] == "YH76 ZWF"
+    assert PERMISSION_END_DATE == date(2027, 11, 26)
