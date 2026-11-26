@@ -934,13 +934,73 @@ def get_full_address(addr: str, postcode: str) -> str:
     return addr_clean
 
 
+# ── UK driving licence number (16 characters) ──
+#   1-5  surname (padded with 9)      → letters or 9
+#   6-11 date of birth                → digits
+#   12-13 initials (padded with 9)    → letters or 9
+#   14   spare digit                  → digit
+#   15-16 check characters            → letters
+# OCR confuses look-alikes (O/0, I/1, S/5, B/8, Z/2, G/6); because every
+# position only allows letters OR digits, the right one can be worked out.
+_LIC_PATTERN = re.compile(r"[A-Z9]{5}\d{6}[A-Z9]{2}\d[A-Z]{2}")
+_TO_LETTER = {"0": "O", "1": "I", "2": "Z", "5": "S", "6": "G", "8": "B", "4": "A", "7": "T", "3": "E"}
+_TO_DIGIT = {"O": "0", "Q": "0", "D": "0", "U": "0", "I": "1", "L": "1", "J": "1", "Z": "2",
+             "S": "5", "G": "6", "B": "8", "T": "7", "A": "4", "E": "3"}
+_LOOKALIKE = {frozenset(p) for p in ("O0", "I1", "L1", "S5", "B8", "Z2", "G6", "Q0", "D0")}
+_LIC_KIND = ["L9"] * 5 + ["D"] * 6 + ["L9"] * 2 + ["D"] + ["L"] * 2
+
+def _fix_licence_positions(lic16: str) -> str:
+    out = []
+    for ch, kind in zip(lic16, _LIC_KIND):
+        if kind == "D" and not ch.isdigit():
+            ch = _TO_DIGIT.get(ch, ch)
+        elif kind == "L9" and ch.isdigit() and ch != "9":
+            ch = _TO_LETTER.get(ch, ch)
+        elif kind == "L" and ch.isdigit():
+            ch = _TO_LETTER.get(ch, ch)
+        out.append(ch)
+    return "".join(out)
+
 def normalize_license_number(s: str) -> str:
-    """Normalize a UK licence number to its canonical 16-character identifier."""
+    """Return the 16-character UK licence number, correcting O/0-style mix-ups."""
     compact = re.sub(r"[^A-Z0-9]", "", str(s or "").upper())
-    match = re.search(r"[A-Z9]{5}\d{6}[A-Z9]{2}[A-Z0-9]{3,5}", compact)
-    if match:
-        return match.group(0)[:16]
+    if len(compact) >= 16:
+        for i in range(0, len(compact) - 15):
+            fixed = _fix_licence_positions(compact[i:i + 16])
+            if _LIC_PATTERN.fullmatch(fixed):
+                return fixed
     return compact
+
+def fix_licence_with_details(lic: str, surname: str = "", forenames: str = "", dob: str = "") -> str:
+    """Use the driver's own details to settle look-alike characters.
+
+    Only swaps a character for its look-alike (e.g. 0→O when the first name
+    starts with O); real differences are left alone.
+    """
+    lic = normalize_license_number(lic)
+    if len(lic) != 16:
+        return lic
+    expected = [None] * 16
+    sur = re.sub(r"[^A-Z]", "", str(surname or "").upper())
+    if sur.startswith("MAC"):
+        sur = "MC" + sur[3:]
+    if sur:
+        for i, ch in enumerate((sur[:5]).ljust(5, "9")):
+            expected[i] = ch
+    names = [re.sub(r"[^A-Z]", "", w) for w in str(forenames or "").upper().split()]
+    names = [w for w in names if w and w not in _NAME_TITLES]
+    if names:
+        initials = (names[0][0] + (names[1][0] if len(names) > 1 else "9"))
+        expected[11], expected[12] = initials[0], initials[1]
+    m = re.match(r"\s*(\d{1,2})[./\-](\d{1,2})[./\-](\d{4})", str(dob or ""))
+    if m:
+        d, mo, y = m.group(1).zfill(2), m.group(2).zfill(2), m.group(3)
+        expected[5], expected[7], expected[8], expected[9], expected[10] = y[2], mo[1], d[0], d[1], y[3]
+    chars = list(lic)
+    for i, want in enumerate(expected):
+        if want and chars[i] != want and frozenset((chars[i], want)) in _LOOKALIKE:
+            chars[i] = want
+    return "".join(chars)
 
 
 def _grab(blob, start_pats, end_pats):
@@ -1444,9 +1504,11 @@ def run_ocr_azure(uploaded_file) -> dict:
         for k in ("surname", "forename", "dob", "expiry", "licence", "address", "postcode"):
             if not out.get(k) and backup.get(k):
                 out[k] = backup[k]
-        if out.get("licence") and not re.fullmatch(r"[A-Z9]{5}\d{6}[A-Z9]{2}[A-Z0-9]{3}", out["licence"]) and backup.get("licence"):
+        if out.get("licence") and not _LIC_PATTERN.fullmatch(out["licence"]) and backup.get("licence"):
             out["licence"] = backup["licence"]
 
+    if out.get("licence"):
+        out["licence"] = fix_licence_with_details(out["licence"], out.get("surname", ""), out.get("forename", ""), out.get("dob", ""))
     out["seconds"] = round(_time_mod.perf_counter() - t0, 1)
     try:
         out["signature_bytes"] = extract_signature_crop(result, card_img, allow_position_fallback=card_img is not orig_img)
@@ -1514,7 +1576,18 @@ def parse_licence(raw: str) -> dict:
     lic_match = re.search(r"5\.?([A-Z9]{5}\d{6}[A-Z9]{2}[A-Z0-9]{3,5})", clean_strip)
     if not lic_match:
         lic_match = re.search(r"([A-Z9]{5}\d{6}[A-Z9]{2}[A-Z0-9]{3,5})", clean_strip)
-    if lic_match: licence = normalize_license_number(lic_match.group(1))
+    if lic_match:
+        licence = normalize_license_number(lic_match.group(1))
+    else:
+        # Look-alike mistakes (e.g. "09" for initials "O9") break the strict
+        # pattern: try every 16-character run after the "5." field marker.
+        for m5 in re.finditer(r"5\.([A-Z0-9]{16,20})", clean_strip):
+            cand = normalize_license_number(m5.group(1))
+            if _LIC_PATTERN.fullmatch(cand):
+                licence = cand
+                break
+    if licence:
+        licence = fix_licence_with_details(licence, surname, forename, dob)
 
     raw_8 = _grab(blob_proc, [r"8\."], [r"9\."]) or (re.search(r"8\.\s*(.*?)(?=\s*9\.)", blob_proc, re.DOTALL).group(1).strip() if re.search(r"8\.\s*(.*?)(?=\s*9\.)", blob_proc, re.DOTALL) else blob_proc)
     raw_9_match = re.search(r"9\.\s*(.*?)(?=\s*10\.|$)", blob_proc, re.DOTALL)
@@ -2520,8 +2593,26 @@ def _sync_name(src):
     st.session_state["c_form_name"] = val
     refresh_auto_names()
 
+def licence_for_name(lic: str, full_name: str) -> str:
+    """Fix look-alike characters in a licence number using the driver's name."""
+    words = [w for w in re.sub(r"[^A-Za-z \-]", " ", str(full_name or "")).split() if w]
+    if not str(lic or "").strip():
+        return ""
+    sur = words[-1] if len(words) > 1 else ""
+    fore = " ".join(words[:-1]) if len(words) > 1 else ""
+    fixed = fix_licence_with_details(lic, sur, fore)
+    return fixed if len(fixed) == 16 else str(lic).strip().upper()
+
+def licence_warning(key: str):
+    """Small warning under a licence box when the number can't be a UK licence."""
+    val = str(st.session_state.get(key, "") or "").strip()
+    if val and not _LIC_PATTERN.fullmatch(normalize_license_number(val)):
+        st.caption("⚠️ This doesn't look like a 16-character UK licence number — check it against the card.")
+
 def _sync_licence(src):
     val = str(st.session_state.get(src, "") or "").upper()
+    name = st.session_state.get("p_form_name") or st.session_state.get("c_form_name") or ""
+    val = licence_for_name(val, name)
     st.session_state["p_form_lic"] = val
     st.session_state["c_form_lic"] = val
 
@@ -2855,7 +2946,7 @@ def bulk_permission_letters(rows: list[dict], doc_date: date, start: date, end: 
             "make_model": make_model,
             "driver_name": name.upper(),
             "address": normalize_address(r.get("address", "")),
-            "license_no": str(r.get("licence") or "").strip().upper(),
+            "license_no": licence_for_name(r.get("licence") or "", name),
             "start_date": start.strftime("%d/%m/%Y"),
             "end_date": end.strftime("%d/%m/%Y"),
         })
@@ -2930,6 +3021,8 @@ def _apply_bulk_edits(editor_key: str):
                 row["include"] = bool(val)
             else:
                 row[field] = "" if val is None else str(val)
+        if row.get("licence"):
+            row["licence"] = licence_for_name(row["licence"], row.get("name", ""))
     for idx in sorted((int(i) for i in (state.get("deleted_rows") or [])), reverse=True):
         if idx < len(rows):
             rows.pop(idx)
@@ -2953,7 +3046,8 @@ def _pending_reg_changed(nonce: int):
 def _add_pending(nonce: int):
     ss = st.session_state
     pending = ss.get("bulk_pending") or {}
-    res = {"name": ss.get(f"bulk_name_{nonce}", ""), "licence": ss.get(f"bulk_lic_{nonce}", "").upper(),
+    res = {"name": ss.get(f"bulk_name_{nonce}", ""),
+           "licence": licence_for_name(ss.get(f"bulk_lic_{nonce}", ""), ss.get(f"bulk_name_{nonce}", "")),
            "address": ss.get(f"bulk_addr_{nonce}", ""), "status": pending.get("status", ""), "file": pending.get("file", "")}
     row = _bulk_row(res, ss.get(f"bulk_reg_{nonce}") or "", (ss.get(f"bulk_mm_{nonce}") or "").upper())
     _bulk_list().append(row)
@@ -3028,6 +3122,7 @@ def render_bulk_page():
                 st.text_input("Driver Name", key=f"bulk_name_{nonce}")
             with r2:
                 st.text_input("Licence No", key=f"bulk_lic_{nonce}")
+                licence_warning(f"bulk_lic_{nonce}")
             st.text_input("Address", key=f"bulk_addr_{nonce}")
             r3, r4 = st.columns(2)
             with r3:
@@ -3320,7 +3415,7 @@ def permission_data_from_state() -> dict:
         "make_model": _ss("p_form_mod").strip().upper(),
         "driver_name": _ss("p_form_name").strip().upper(),
         "address": normalize_address(_ss("p_form_addr")),
-        "license_no": _ss("p_form_lic").strip().upper(),
+        "license_no": licence_for_name(_ss("p_form_lic"), _ss("p_form_name")),
         "start_date": format_date_val(st.session_state.get("p_form_start"), get_uk_now().date()),
         "end_date": format_date_val(st.session_state.get("p_form_end"), DEFAULT_HIRE_END_DATE),
     }
@@ -3334,7 +3429,7 @@ def contract_data_from_state(include_signature: bool = True) -> dict:
         "address": normalize_address(_ss("c_form_addr")),
         "postcode": _ss("c_form_post").strip().upper(),
         "dob": _ss("c_form_dob").strip(),
-        "license_no": _ss("c_form_lic").strip().upper(),
+        "license_no": licence_for_name(_ss("c_form_lic"), _ss("c_form_name")),
         "expiry_date": _ss("c_form_exp").strip(),
         "issuing_authority": _ss("c_form_auth").strip().upper(),
         "phone": _ss("c_form_ph").strip(),
@@ -3406,6 +3501,7 @@ def documents_area():
                 c1, c2 = st.columns(2)
                 with c1:
                     st.text_input("Driving Licence No", key="p_form_lic", live=LIVE, on_change=_sync_licence, args=("p_form_lic",))
+                    licence_warning("p_form_lic")
                 with c2:
                     st.text_input("Insurance Policy No", key="p_form_ins", live=LIVE)
                 st.text_input("Driver Address", key="p_form_addr", live=LIVE, on_change=_sync_address_from_perm, placeholder="House, street, town, postcode")
@@ -3488,6 +3584,7 @@ def documents_area():
                 cc1, cc2, cc3 = st.columns(3)
                 with cc1:
                     st.text_input("Licence No", key="c_form_lic", live=LIVE, on_change=_sync_licence, args=("c_form_lic",))
+                    licence_warning("c_form_lic")
                 with cc2:
                     st.text_input("Licence Expiry", key="c_form_exp", live=LIVE, placeholder="DD/MM/YYYY")
                 with cc3:

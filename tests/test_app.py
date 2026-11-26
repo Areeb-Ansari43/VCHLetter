@@ -919,3 +919,32 @@ def test_mg_s9_reg_and_end_date():
     assert "YH76Z LWF" not in FLEET_BY_REG
     assert find_fleet_vehicle("yh76zwf")["reg"] == "YH76 ZWF"
     assert PERMISSION_END_DATE == date(2027, 11, 26)
+
+def test_licence_letter_o_vs_zero_fixed():
+    from streamlit_app import normalize_license_number, fix_licence_with_details, licence_for_name
+    # Initials position must be the letter O (first name Oscar), not zero.
+    assert normalize_license_number("MARSH812151099XY") == "MARSH812151O99XY"
+    assert fix_licence_with_details("MARSH812151099XY", "MARSH", "OSCAR", "15/12/1981") == "MARSH812151O99XY"
+    assert licence_for_name("marsh 812151 099xy", "Oscar Marsh") == "MARSH812151O99XY"
+    # Surname letter O read as zero, and a zero in the birth date read as O
+    assert normalize_license_number("JONES8O1015J99AB") == "JONES801015J99AB"
+    assert fix_licence_with_details("B0WEN801015J99AB", "BOWEN", "JOHN") == "BOWEN801015J99AB"
+    # Initial is a real zero-looking letter only when the name says so; 9 padding kept
+    assert fix_licence_with_details("SMITH801015J99AB", "SMITH", "JOHN") == "SMITH801015J99AB"
+    # Short surname padded with 9s stays as 9s
+    assert normalize_license_number("NG999801015J99AB") == "NG999801015J99AB"
+    # Licence with issue number after it
+    assert normalize_license_number("MARSH812151O99XY 12") == "MARSH812151O99XY"
+
+def test_parse_licence_recovers_lookalike_licence():
+    p = parse_licence("1. MARSH 2. OSCAR 3. 15.12.1981 4b. 01.01.2030 5. MARSH812151099XY 12 8. 10 HIGH STREET, LONDON, SW1A 1AA 9. AM")
+    assert p["licence"] == "MARSH812151O99XY"
+
+def test_documents_print_fixed_licence():
+    import streamlit_app as sa, pypdfium2
+    st.session_state.clear()
+    sa.init_state()
+    st.session_state["p_form_name"] = "Oscar Marsh"
+    st.session_state["p_form_lic"] = "MARSH812151099XY"
+    data = sa.permission_data_from_state()
+    assert data["license_no"] == "MARSH812151O99XY"
