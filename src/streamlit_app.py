@@ -2474,8 +2474,6 @@ if not st.session_state.authenticated:
 DEFAULT_HIRE_END_DATE = date(2026, 11, 27)
 # Current insurance policy and its period (used by the permission letters).
 INSURANCE_POLICY_NO = "FPH102347"
-PERMISSION_LETTER_DATE = date(2026, 11, 25)
-PERMISSION_START_DATE = date(2026, 11, 25)
 PERMISSION_END_DATE = date(2027, 11, 26)
 MANUAL_VEHICLE = "__manual__"
 MAX_UPLOAD_SIZE_BYTES = 25 * 1024 * 1024  # 25 MB
@@ -2489,8 +2487,8 @@ def form_defaults() -> dict:
     now_t = get_uk_now().time().replace(second=0, microsecond=0)
     return {
         # Permission letter
-        "p_form_date": PERMISSION_LETTER_DATE, "p_form_ins": INSURANCE_POLICY_NO, "p_form_reg": "", "p_form_mod": "",
-        "p_form_name": "", "p_form_lic": "", "p_form_start": PERMISSION_START_DATE, "p_form_end": PERMISSION_END_DATE,
+        "p_form_date": today, "p_form_ins": INSURANCE_POLICY_NO, "p_form_reg": "", "p_form_mod": "",
+        "p_form_name": "", "p_form_lic": "", "p_form_start": today, "p_form_end": PERMISSION_END_DATE,
         "p_form_addr": "", "perm_document_name": "Permission Letter",
         # Contract
         "c_form_no": build_default_contract_no("", ""), "c_form_name": "", "c_form_addr": "", "c_form_post": "",
@@ -2647,9 +2645,6 @@ def _sync_address_from_perm():
 
 def _sync_address_from_contract():
     st.session_state["p_form_addr"] = get_full_address(_ss("c_form_addr"), _ss("c_form_post"))
-
-def _sync_pair(a, b):
-    st.session_state[b] = st.session_state.get(a)
 
 def reset_workspace():
     for k, v in form_defaults().items():
@@ -3221,9 +3216,9 @@ def render_bulk_page():
         with s1:
             policy = st.text_input("Insurance Policy No", value=INSURANCE_POLICY_NO, key="bulk_policy")
         with s2:
-            doc_date = st.date_input("Letter date", value=PERMISSION_LETTER_DATE, format="DD/MM/YYYY", key="bulk_date")
+            doc_date = st.date_input("Letter date", value=get_uk_now().date(), format="DD/MM/YYYY", key="bulk_date")
         with s3:
-            start = st.date_input("Hire start", value=PERMISSION_START_DATE, format="DD/MM/YYYY", key="bulk_start")
+            start = st.date_input("Hire start", value=get_uk_now().date(), format="DD/MM/YYYY", key="bulk_start")
         with s4:
             end = st.date_input("Hire end", value=PERMISSION_END_DATE, format="DD/MM/YYYY", key="bulk_end")
         if st.button(f"Create {len(ready)} permission letter{'s' if len(ready) != 1 else ''}", key="bulk_generate",
@@ -3484,7 +3479,7 @@ def documents_area():
 
     head_l, head_r = st.columns([3, 1], vertical_alignment="center")
     with head_l:
-        st.caption("Everything you type appears instantly in the live preview. Name, licence, address, vehicle and dates are shared between both documents.")
+        st.caption("Everything you type appears instantly in the live preview. Name, licence, address and vehicle are shared between both documents; each document keeps its own dates.")
     with head_r:
         st.button("New customer", key="reset_ws_btn", icon=":material/restart_alt:", on_click=reset_workspace,
                   width="stretch", help="Clear every field and start again")
@@ -3515,11 +3510,11 @@ def documents_area():
                     st.text_input("Make & Model", key="p_form_mod", live=LIVE, on_change=_sync_make_model_from_perm)
                 d1, d2, d3 = st.columns(3)
                 with d1:
-                    st.date_input("Document Date", key="p_form_date", format="DD/MM/YYYY", on_change=_sync_pair, args=("p_form_date", "c_form_date"))
+                    st.date_input("Document Date", key="p_form_date", format="DD/MM/YYYY")
                 with d2:
-                    st.date_input("Hire Start", key="p_form_start", format="DD/MM/YYYY", on_change=_sync_pair, args=("p_form_start", "c_form_start"))
+                    st.date_input("Hire Start", key="p_form_start", format="DD/MM/YYYY")
                 with d3:
-                    st.date_input("Hire End", key="p_form_end", format="DD/MM/YYYY", on_change=_sync_pair, args=("p_form_end", "c_form_return"))
+                    st.date_input("Hire End", key="p_form_end", format="DD/MM/YYYY")
 
             with st.container(border=True):
                 p_doc_name = st.text_input("Document Name", key="perm_document_name")
@@ -3580,7 +3575,7 @@ def documents_area():
                 with cc2:
                     st.text_input("Date of Birth", key="c_form_dob", live=LIVE, placeholder="DD/MM/YYYY")
                 with cc3:
-                    st.date_input("Contract Date", key="c_form_date", format="DD/MM/YYYY", on_change=_sync_pair, args=("c_form_date", "p_form_date"))
+                    st.date_input("Contract Date", key="c_form_date", format="DD/MM/YYYY")
                 cc1, cc2, cc3 = st.columns(3)
                 with cc1:
                     st.text_input("Licence No", key="c_form_lic", live=LIVE, on_change=_sync_licence, args=("c_form_lic",))
@@ -3613,9 +3608,9 @@ def documents_area():
                     st.text_input("Deposit (£)", key="c_form_dep", live=LIVE)
                 pt1, pt2 = st.columns(2)
                 with pt1:
-                    st.date_input("Hire Start", key="c_form_start", format="DD/MM/YYYY", on_change=_sync_pair, args=("c_form_start", "p_form_start"))
+                    st.date_input("Hire Start", key="c_form_start", format="DD/MM/YYYY")
                 with pt2:
-                    st.date_input("Expected Return", key="c_form_return", format="DD/MM/YYYY", on_change=_sync_pair, args=("c_form_return", "p_form_end"))
+                    st.date_input("Expected Return", key="c_form_return", format="DD/MM/YYYY")
                 tm1, tm2 = st.columns(2)
                 with tm1:
                     st.time_input("Time Car Given", key="c_form_start_time")

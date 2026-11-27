@@ -824,11 +824,11 @@ def test_bulk_scan_one_handles_success_and_failure():
     assert r["status"].startswith("❌") and r["name"] == ""
 
 def test_new_insurance_defaults():
-    from streamlit_app import INSURANCE_POLICY_NO, PERMISSION_START_DATE, PERMISSION_END_DATE, form_defaults
+    from streamlit_app import INSURANCE_POLICY_NO, PERMISSION_END_DATE, form_defaults, get_uk_now
     assert INSURANCE_POLICY_NO == "FPH102347"
-    from streamlit_app import PERMISSION_LETTER_DATE
-    assert (PERMISSION_LETTER_DATE, PERMISSION_START_DATE, PERMISSION_END_DATE) == (date(2026, 11, 25), date(2026, 11, 25), date(2027, 11, 26))
-    assert form_defaults()["p_form_date"] == date(2026, 11, 25)
+    today = get_uk_now().date()
+    assert PERMISSION_END_DATE == date(2027, 11, 26)
+    assert form_defaults()["p_form_date"] == today and form_defaults()["p_form_start"] == today
     d = form_defaults()
     assert d["p_form_ins"] == INSURANCE_POLICY_NO and d["p_form_end"] == PERMISSION_END_DATE
 
@@ -948,3 +948,9 @@ def test_documents_print_fixed_licence():
     st.session_state["p_form_lic"] = "MARSH812151099XY"
     data = sa.permission_data_from_state()
     assert data["license_no"] == "MARSH812151O99XY"
+
+
+def test_contract_dates_not_linked_to_permission_letter():
+    import streamlit_app
+    code = open(streamlit_app.__file__, encoding="utf-8").read()
+    assert "_sync_pair" not in code
